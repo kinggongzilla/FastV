@@ -17,7 +17,14 @@
 import unittest
 
 from transformers import MegaConfig, is_torch_available
-from transformers.testing_utils import TestCasePlus, require_torch, slow, torch_device
+from transformers.testing_utils import (
+    TestCasePlus,
+    is_flaky,
+    require_torch,
+    require_torch_fp16,
+    slow,
+    torch_device,
+)
 
 from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
@@ -37,7 +44,6 @@ if is_torch_available():
         MegaForTokenClassification,
         MegaModel,
     )
-    from transformers.models.mega.modeling_mega import MEGA_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 class MegaModelTester:
@@ -51,7 +57,7 @@ class MegaModelTester:
         use_labels=True,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         intermediate_size=37,
         hidden_dropout_prob=0.1,
         attention_probs_dropout_prob=0.1,
@@ -313,6 +319,34 @@ class MegaModelTester:
         # test that outputs are equal for slice
         self.parent.assertTrue(torch.allclose(output_from_past_slice, output_from_no_past_slice, atol=1e-3))
 
+    def create_and_check_decoder_model_with_chunking(
+        self,
+        config,
+        input_ids,
+        token_type_ids,
+        input_mask,
+        sequence_labels,
+        token_labels,
+        choice_labels,
+        encoder_hidden_states,
+        encoder_attention_mask,
+    ):
+        config.use_chunking = True
+        config.output_attentions = True
+        config.attention_activation = "laplace"
+        config.chunk_size = input_ids.size(1) * 2
+
+        model = MegaForCausalLM(config).to(torch_device).eval()
+
+        input_ids = input_ids.repeat(1, 8)
+        # multiply the sequence length by 8 since we repeat the same ids 8 times in input_ids
+        input_mask = random_attention_mask([self.batch_size, self.seq_length * 8])
+
+        result = model(input_ids, attention_mask=input_mask)
+
+        # test if the sequence length of attentions is same provided chunk_size
+        self.parent.assertEqual(result["attentions"][0].shape[-1], config.chunk_size)
+
     def create_and_check_for_masked_lm(
         self, config, input_ids, token_type_ids, input_mask, sequence_labels, token_labels, choice_labels
     ):
@@ -500,6 +534,18 @@ class MegaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
         self.model_tester = MegaModelTester(self)
         self.config_tester = ConfigTester(self, config_class=MegaConfig, hidden_size=37)
 
+    # TODO: @ydshieh
+    @is_flaky(description="Sometimes gives `AssertionError` on expected outputs")
+    def test_pipeline_fill_mask(self):
+        super().test_pipeline_fill_mask()
+
+    # TODO: @ydshieh
+    @is_flaky(
+        description="Sometimes gives `RuntimeError: probability tensor contains either `inf`, `nan` or element < 0`"
+    )
+    def test_pipeline_text_generation(self):
+        super().test_pipeline_text_generation()
+
     def test_config(self):
         self.config_tester.run_common_tests()
 
@@ -547,6 +593,10 @@ class MegaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
         config_and_inputs = self.model_tester.prepare_config_and_inputs_for_decoder()
         self.model_tester.create_and_check_decoder_model_past_large_inputs(*config_and_inputs)
 
+    def test_decoder_model_with_chunking(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs_for_decoder()
+        self.model_tester.create_and_check_decoder_model_with_chunking(*config_and_inputs)
+
     def test_for_masked_lm(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_for_masked_lm(*config_and_inputs)
@@ -587,12 +637,12 @@ class MegaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.check_sequence_length_beyond_max_positions(*config_and_inputs)
 
+    @require_torch_fp16
     def test_generate_fp16(self):
         config, input_ids, _, attention_mask, *_ = self.model_tester.prepare_config_and_inputs_for_decoder()
         # attention_mask = torch.LongTensor(input_ids.ne(1)).to(torch_device)
         model = MegaForCausalLM(config).eval().to(torch_device)
-        if torch_device == "cuda":
-            model.half()
+        model.half()
         model.generate(input_ids, attention_mask=attention_mask)
         model.generate(num_beams=4, do_sample=True, early_stopping=False, num_return_sequences=3)
 
@@ -621,9 +671,9 @@ class MegaModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in MEGA_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = MegaModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "mnaylor/mega-base-wikitext"
+        model = MegaModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     @unittest.skip(reason="Does not work on the tiny model as we keep hitting edge cases.")
     def test_cpu_offload(self):

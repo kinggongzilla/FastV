@@ -41,7 +41,6 @@ if is_torch_available():
     import torch.nn as nn
 
     from transformers import TvltForAudioVisualClassification, TvltForPreTraining, TvltModel
-    from transformers.models.tvlt.modeling_tvlt import TVLT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_datasets_available():
@@ -67,8 +66,8 @@ class TvltModelTester:
         num_image_channels=3,
         num_audio_channels=1,
         num_frames=2,
-        hidden_size=128,
-        num_hidden_layers=12,
+        hidden_size=32,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=128,
         hidden_act="gelu",
@@ -79,7 +78,7 @@ class TvltModelTester:
         qkv_bias=True,
         use_mean_pooling=True,
         decoder_num_attention_heads=4,
-        decoder_hidden_size=64,
+        decoder_hidden_size=32,
         decoder_num_hidden_layers=2,
         decoder_intermediate_size=128,
         image_mask_ratio=0.75,
@@ -414,9 +413,9 @@ class TvltModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in TVLT_PRETRAINED_MODEL_ARCHIVE_LIST:
-            model = TvltModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "ZinengTang/tvlt-base"
+        model = TvltModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     def test_training(self):
         if not self.model_tester.is_training:
@@ -541,10 +540,6 @@ class TvltModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
             config.output_hidden_states = True
 
             check_hidden_states_output(inputs_dict, config, model_class)
-
-    @unittest.skip("Will be fixed soon by reducing the size of the model used for common tests.")
-    def test_model_is_small(self):
-        pass
 
 
 # We will verify our results on a video of eating spaghetti

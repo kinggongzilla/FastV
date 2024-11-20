@@ -42,7 +42,7 @@ Are you unsure whether the model you wish to use already has a corresponding Ten
 &nbsp;
 
 Check the `model_type` field of the `config.json` of your model of choice
-([example](https://huggingface.co/bert-base-uncased/blob/main/config.json#L14)). If the corresponding model folder in
+([example](https://huggingface.co/google-bert/bert-base-uncased/blob/main/config.json#L14)). If the corresponding model folder in
 🤗 Transformers has a file whose name starts with "modeling_tf", it means that it has a corresponding TensorFlow
 architecture ([example](https://github.com/huggingface/transformers/tree/main/src/transformers/models/bert)).
 
@@ -56,7 +56,7 @@ you might recall from our [general overview of 🤗 Transformers](add_new_model#
 that we are an opinionated bunch - the ease of use of 🤗 Transformers relies on consistent design choices. From
 experience, we can tell you a few important things about adding TensorFlow models:
 
-- Don't reinvent the wheel! More often that not, there are at least two reference implementations you should check: the
+- Don't reinvent the wheel! More often than not, there are at least two reference implementations you should check: the
 PyTorch equivalent of the model you are implementing and other TensorFlow models for the same class of problems.
 - Great model implementations survive the test of time. This doesn't happen because the code is pretty, but rather
 because the code is clear, easy to debug and build upon. If you make the life of the maintainers easy with your
@@ -83,7 +83,7 @@ don't have your eyes set on a specific architecture, asking the 🤗 Transformer
 maximize your impact - we will guide you towards the most prominent architectures that are missing on the TensorFlow
 side. If the specific model you want to use with TensorFlow already has a TensorFlow architecture implementation in
 🤗 Transformers but is lacking weights, feel free to jump straight into the
-[weight conversion section](#adding-tensorflow-weights-to-hub)
+[weight conversion section](#adding-tensorflow-weights-to--hub)
 of this page.
 
 For simplicity, the remainder of this guide assumes you've decided to contribute with the TensorFlow version of
@@ -101,7 +101,7 @@ TensorFlow-related pull request.
 
 **2. Prepare transformers dev environment**
 
-Having selected the model architecture, open an draft PR to signal your intention to work on it. Follow the
+Having selected the model architecture, open a draft PR to signal your intention to work on it. Follow the
 instructions below to set up your environment and open a draft PR.
 
 1. Fork the [repository](https://github.com/huggingface/transformers) by clicking on the 'Fork' button on the
@@ -109,52 +109,52 @@ instructions below to set up your environment and open a draft PR.
 
 2. Clone your `transformers` fork to your local disk, and add the base repository as a remote:
 
-```bash
-git clone https://github.com/[your Github handle]/transformers.git
-cd transformers
-git remote add upstream https://github.com/huggingface/transformers.git
-```
+   ```bash
+   git clone https://github.com/[your Github handle]/transformers.git
+   cd transformers
+   git remote add upstream https://github.com/huggingface/transformers.git
+   ```
 
-3. Set up a development environment, for instance by running the following command:
+3. Set up a development environment, for instance by running the following commands:
 
-```bash
-python -m venv .env
-source .env/bin/activate
-pip install -e ".[dev]"
-```
+   ```bash
+   python -m venv .env
+   source .env/bin/activate
+   pip install -e ".[dev]"
+   ```
 
-Depending on your OS, and since the number of optional dependencies of Transformers is growing, you might get a
-failure with this command. If that's the case make sure to install TensorFlow then do:
+   Depending on your OS, and since the number of optional dependencies of Transformers is growing, you might get a
+   failure with this command. If that's the case make sure to install TensorFlow then do:
 
-```bash
-pip install -e ".[quality]"
-```
+   ```bash
+   pip install -e ".[quality]"
+   ```
 
-**Note:** You don't need to have CUDA installed. Making the new model work on CPU is sufficient.
+   **Note:** You don't need to have CUDA installed. Making the new model work on CPU is sufficient.
 
-4. Create a branch with a descriptive name from your main branch
+4. Create a branch with a descriptive name from your main branch:
 
-```bash
-git checkout -b add_tf_brand_new_bert
-```
+   ```bash
+   git checkout -b add_tf_brand_new_bert
+   ```
 
-5. Fetch and rebase to current main
+5. Fetch and rebase to current main:
 
-```bash
-git fetch upstream
-git rebase upstream/main
-```
+   ```bash
+   git fetch upstream
+   git rebase upstream/main
+   ```
 
 6. Add an empty `.py` file in `transformers/src/models/brandnewbert/` named `modeling_tf_brandnewbert.py`. This will
 be your TensorFlow model file.
 
 7. Push the changes to your account using:
 
-```bash
-git add .
-git commit -m "initial commit"
-git push -u origin add_tf_brand_new_bert
-```
+   ```bash
+   git add .
+   git commit -m "initial commit"
+   git push -u origin add_tf_brand_new_bert
+   ```
 
 8. Once you are satisfied, go to the webpage of your fork on GitHub. Click on “Pull request”. Make sure to add the
    GitHub handle of some members of the Hugging Face team as reviewers, so that the Hugging Face team gets notified for
@@ -229,7 +229,6 @@ documentation pages. You can complete this part entirely following the patterns 
 changes:
 - Include all public classes of *BrandNewBert* in `src/transformers/__init__.py`
 - Add *BrandNewBert* classes to the corresponding Auto classes in `src/transformers/models/auto/modeling_tf_auto.py`
-- Include the modeling file in the documentation test file list in `utils/documentation_tests.txt`
 - Add the lazy loading classes related to *BrandNewBert* in `src/transformers/utils/dummy_tf_objects.py`
 - Update the import structures for the public classes in `src/transformers/models/brand_new_bert/__init__.py`
 - Add the documentation pointers to the public methods of *BrandNewBert* in `docs/source/en/model_doc/brand_new_bert.md`
@@ -328,7 +327,7 @@ That's it! 🎉
 ## Debugging mismatches across ML frameworks 🐛
 
 At some point, when adding a new architecture or when creating TensorFlow weights for an existing architecture, you
-might come across errors compaining about mismatches between PyTorch and TensorFlow. You might even decide to open the
+might come across errors complaining about mismatches between PyTorch and TensorFlow. You might even decide to open the
 model architecture code for the two frameworks, and find that they look identical. What's going on? 🤔
 
 First of all, let's talk about why understanding these mismatches matters. Many community members will use 🤗
@@ -351,7 +350,7 @@ ingredient here is patience. Here is our suggested workflow for when you come ac
    that you'll have to venture into the source implementation of said instruction. In some cases, you might find an
    issue with a reference implementation - don't abstain from opening an issue in the upstream repository.
 
-In some cases, in dicussion with the 🤗 Transformers team, we might find that the fixing the mismatch is infeasible.
+In some cases, in discussion with the 🤗 Transformers team, we might find that fixing the mismatch is infeasible.
 When the mismatch is very small in the output layers of the model (but potentially large in the hidden states), we
 might decide to ignore it in favor of distributing the model. The `pt-to-tf` CLI mentioned above has a `--max-error`
 flag to override the error message at weight conversion time.

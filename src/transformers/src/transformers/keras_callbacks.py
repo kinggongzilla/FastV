@@ -8,17 +8,16 @@ import numpy as np
 import tensorflow as tf
 from huggingface_hub import Repository, create_repo
 from packaging.version import parse
-from tensorflow.keras.callbacks import Callback
 
 from . import IntervalStrategy, PreTrainedTokenizerBase
 from .modelcard import TrainingSummary
-from .utils import get_full_repo_name
+from .modeling_tf_utils import keras
 
 
 logger = logging.getLogger(__name__)
 
 
-class KerasMetricCallback(Callback):
+class KerasMetricCallback(keras.callbacks.Callback):
     """
     Callback to compute metrics at the end of every epoch. Unlike normal Keras metrics, these do not need to be
     compilable by TF. It is particularly useful for common NLP metrics like BLEU and ROUGE that require string
@@ -193,8 +192,7 @@ class KerasMetricCallback(Callback):
             # This dense conditional recognizes the case where we have an encoder-decoder model, but
             # avoids getting tangled up when we just have a model with a layer called 'encoder'
             if hasattr(self.model, "encoder") and hasattr(self.model.encoder, "main_input_name"):
-                if self.model.encoder.main_input_name != self.model.main_input_name:
-                    main_input_name = self.model.encoder.main_input_name
+                main_input_name = self.model.encoder.main_input_name
             else:
                 main_input_name = getattr(self.model, "main_input_name", "input_ids")
 
@@ -267,7 +265,7 @@ class KerasMetricCallback(Callback):
         logs.update(metric_output)
 
 
-class PushToHubCallback(Callback):
+class PushToHubCallback(keras.callbacks.Callback):
     """
     Callback that will save and push the model to the Hub regularly. By default, it pushes once per epoch, but this can
     be changed with the `save_strategy` argument. Pushed models can be accessed like any other model on the hub, such
@@ -335,14 +333,13 @@ class PushToHubCallback(Callback):
             raise ValueError("Please supply a positive integer argument for save_steps when save_strategy == 'steps'!")
         self.save_steps = save_steps
         output_dir = Path(output_dir)
+
+        # Create repo and retrieve repo_id
         if hub_model_id is None:
             hub_model_id = output_dir.absolute().name
-        if "/" not in hub_model_id:
-            hub_model_id = get_full_repo_name(hub_model_id, token=hub_token)
+        self.hub_model_id = create_repo(repo_id=hub_model_id, exist_ok=True, token=hub_token).repo_id
 
         self.output_dir = output_dir
-        self.hub_model_id = hub_model_id
-        create_repo(self.hub_model_id, exist_ok=True)
         self.repo = Repository(str(self.output_dir), clone_from=self.hub_model_id, token=hub_token)
 
         self.tokenizer = tokenizer

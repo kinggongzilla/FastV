@@ -27,27 +27,6 @@ logger = logging.get_logger(__name__)
 
 VOCAB_FILES_NAMES = {"vocab_file": "vocab.txt"}
 
-PRETRAINED_VOCAB_FILES_MAP = {
-    "vocab_file": {
-        "microsoft/layoutlm-base-uncased": (
-            "https://huggingface.co/microsoft/layoutlm-base-uncased/resolve/main/vocab.txt"
-        ),
-        "microsoft/layoutlm-large-uncased": (
-            "https://huggingface.co/microsoft/layoutlm-large-uncased/resolve/main/vocab.txt"
-        ),
-    }
-}
-
-PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {
-    "microsoft/layoutlm-base-uncased": 512,
-    "microsoft/layoutlm-large-uncased": 512,
-}
-
-PRETRAINED_INIT_CONFIGURATION = {
-    "microsoft/layoutlm-base-uncased": {"do_lower_case": True},
-    "microsoft/layoutlm-large-uncased": {"do_lower_case": True},
-}
-
 
 # Copied from transformers.models.bert.tokenization_bert.load_vocab
 def load_vocab(vocab_file):
@@ -115,9 +94,6 @@ class LayoutLMTokenizer(PreTrainedTokenizer):
     """
 
     vocab_files_names = VOCAB_FILES_NAMES
-    pretrained_vocab_files_map = PRETRAINED_VOCAB_FILES_MAP
-    pretrained_init_configuration = PRETRAINED_INIT_CONFIGURATION
-    max_model_input_sizes = PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES
 
     def __init__(
         self,
@@ -134,20 +110,6 @@ class LayoutLMTokenizer(PreTrainedTokenizer):
         strip_accents=None,
         **kwargs,
     ):
-        super().__init__(
-            do_lower_case=do_lower_case,
-            do_basic_tokenize=do_basic_tokenize,
-            never_split=never_split,
-            unk_token=unk_token,
-            sep_token=sep_token,
-            pad_token=pad_token,
-            cls_token=cls_token,
-            mask_token=mask_token,
-            tokenize_chinese_chars=tokenize_chinese_chars,
-            strip_accents=strip_accents,
-            **kwargs,
-        )
-
         if not os.path.isfile(vocab_file):
             raise ValueError(
                 f"Can't find a vocabulary file at path '{vocab_file}'. To load the vocabulary from a Google pretrained"
@@ -163,7 +125,22 @@ class LayoutLMTokenizer(PreTrainedTokenizer):
                 tokenize_chinese_chars=tokenize_chinese_chars,
                 strip_accents=strip_accents,
             )
-        self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab, unk_token=self.unk_token)
+
+        self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab, unk_token=str(unk_token))
+
+        super().__init__(
+            do_lower_case=do_lower_case,
+            do_basic_tokenize=do_basic_tokenize,
+            never_split=never_split,
+            unk_token=unk_token,
+            sep_token=sep_token,
+            pad_token=pad_token,
+            cls_token=cls_token,
+            mask_token=mask_token,
+            tokenize_chinese_chars=tokenize_chinese_chars,
+            strip_accents=strip_accents,
+            **kwargs,
+        )
 
     @property
     def do_lower_case(self):
@@ -176,10 +153,12 @@ class LayoutLMTokenizer(PreTrainedTokenizer):
     def get_vocab(self):
         return dict(self.vocab, **self.added_tokens_encoder)
 
-    def _tokenize(self, text):
+    def _tokenize(self, text, split_special_tokens=False):
         split_tokens = []
         if self.do_basic_tokenize:
-            for token in self.basic_tokenizer.tokenize(text, never_split=self.all_special_tokens):
+            for token in self.basic_tokenizer.tokenize(
+                text, never_split=self.all_special_tokens if not split_special_tokens else None
+            ):
                 # If the token is part of the never_split set
                 if token in self.basic_tokenizer.never_split:
                     split_tokens.append(token)
@@ -259,8 +238,8 @@ class LayoutLMTokenizer(PreTrainedTokenizer):
         self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
     ) -> List[int]:
         """
-        Create a mask from the two sequences passed to be used in a sequence-pair classification task. A LayoutLM
-        sequence pair mask has the following format:
+        Create a mask from the two sequences passed to be used in a sequence-pair classification task. A LayoutLM sequence
+        pair mask has the following format:
 
         ```
         0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1

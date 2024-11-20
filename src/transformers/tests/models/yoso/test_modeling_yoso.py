@@ -36,7 +36,6 @@ if is_torch_available():
         YosoForTokenClassification,
         YosoModel,
     )
-    from transformers.models.yoso.modeling_yoso import YOSO_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 class YosoModelTester:
@@ -51,7 +50,7 @@ class YosoModelTester:
         use_labels=True,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=37,
         hidden_act="gelu",
@@ -351,9 +350,9 @@ class YosoModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in YOSO_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = YosoModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "uw-madison/yoso-4096"
+        model = YosoModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     def test_attention_outputs(self):
         return

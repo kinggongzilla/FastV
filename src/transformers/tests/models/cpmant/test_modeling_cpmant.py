@@ -49,7 +49,7 @@ class CpmAntModelTester:
         use_mc_token_ids=False,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=3,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=37,
         num_buckets=32,
@@ -57,7 +57,7 @@ class CpmAntModelTester:
         prompt_length=8,
         prompt_types=8,
         segment_types=8,
-        init_std=1.0,
+        init_std=0.02,
         return_dict=True,
     ):
         self.parent = parent

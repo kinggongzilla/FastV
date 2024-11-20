@@ -76,7 +76,8 @@ _CHECKPOINT_FOR_SEQUENCE_CLASSIFICATION = "lordtt13/emo-mobilebert"
 _SEQ_CLASS_EXPECTED_OUTPUT = "'others'"
 _SEQ_CLASS_EXPECTED_LOSS = "4.72"
 
-MOBILEBERT_PRETRAINED_MODEL_ARCHIVE_LIST = ["google/mobilebert-uncased"]
+
+from ..deprecated._archive_maps import MOBILEBERT_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 def load_tf_weights_in_mobilebert(model, config, tf_checkpoint_path):
@@ -685,7 +686,6 @@ class MobileBertPreTrainedModel(PreTrainedModel):
     """
 
     config_class = MobileBertConfig
-    pretrained_model_archive_map = MOBILEBERT_PRETRAINED_MODEL_ARCHIVE_LIST
     load_tf_weights = load_tf_weights_in_mobilebert
     base_model_prefix = "mobilebert"
 
@@ -867,6 +867,7 @@ class MobileBertModel(MobileBertPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]

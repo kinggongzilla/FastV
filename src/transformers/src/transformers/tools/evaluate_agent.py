@@ -14,7 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .agents import BASE_PYTHON_TOOLS, clean_code_for_chat, clean_code_for_run
+from .agents import BASE_PYTHON_TOOLS, clean_code_for_chat
 from .python_interpreter import InterpretorError, evaluate
 
 
@@ -200,7 +200,7 @@ EVALUATION_TASKS = [
         task=[
             "Provide me the summary of the `text`, then read it to me before transcribing it and translating it in French.",
             "Summarize `text`, read it out loud then transcribe the audio and translate it in French.",
-            "Read me a summary of the the `text` out loud. Transcribe this and translate it in French.",
+            "Read me a summary of the `text` out loud. Transcribe this and translate it in French.",
         ],
         inputs=["text"],
         answer="translator(transcriber(text_reader(summarizer(text))), src_lang='English', tgt_lang='French')",
@@ -554,7 +554,7 @@ def evaluate_agent(agent, batch_size=8, verbose=False, return_errors=False):
             problem = EVALUATION_TASKS[eval_idx[start_idx + idx]]
             if verbose:
                 print(f"====Task {start_idx + idx}====\n{batch_tasks[idx]}\n")
-            explanation, code = clean_code_for_run(result)
+            explanation, code = agent.clean_code_for_run(result)
 
             # Evaluate agent answer and code answer
             agent_answer = evaluate_code(code, problem.inputs, verbose=verbose)

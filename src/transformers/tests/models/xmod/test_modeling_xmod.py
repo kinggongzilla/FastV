@@ -51,7 +51,7 @@ class XmodModelTester:
         use_labels=True,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=37,
         hidden_act="gelu",
@@ -630,7 +630,7 @@ class XmodModelIntegrationTest(unittest.TestCase):
 
     @slow
     def test_end_to_end_mask_fill(self):
-        tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base")
+        tokenizer = XLMRobertaTokenizer.from_pretrained("FacebookAI/xlm-roberta-base")
         model = XmodForMaskedLM.from_pretrained("facebook/xmod-base", default_language="en_XX")
         model.to(torch_device)
 

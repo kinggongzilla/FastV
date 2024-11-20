@@ -18,7 +18,7 @@ import unittest
 
 from transformers import BertConfig, is_torch_available
 from transformers.models.auto import get_values
-from transformers.testing_utils import CaptureLogger, require_torch, require_torch_gpu, slow, torch_device
+from transformers.testing_utils import CaptureLogger, require_torch, require_torch_accelerator, slow, torch_device
 
 from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
@@ -42,7 +42,6 @@ if is_torch_available():
         BertModel,
         logging,
     )
-    from transformers.models.bert.modeling_bert import BERT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 class BertModelTester:
@@ -57,7 +56,7 @@ class BertModelTester:
         use_labels=True,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=37,
         hidden_act="gelu",
@@ -596,12 +595,12 @@ class BertModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in BERT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = BertModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "google-bert/bert-base-uncased"
+        model = BertModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     @slow
-    @require_torch_gpu
+    @require_torch_accelerator
     def test_torchscript_device_change(self):
         config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
         for model_class in self.all_model_classes:
@@ -627,7 +626,7 @@ class BertModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
 class BertModelIntegrationTest(unittest.TestCase):
     @slow
     def test_inference_no_head_absolute_embedding(self):
-        model = BertModel.from_pretrained("bert-base-uncased")
+        model = BertModel.from_pretrained("google-bert/bert-base-uncased")
         input_ids = torch.tensor([[0, 345, 232, 328, 740, 140, 1695, 69, 6078, 1588, 2]])
         attention_mask = torch.tensor([[0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
         with torch.no_grad():

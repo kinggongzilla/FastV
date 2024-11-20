@@ -47,28 +47,6 @@ VOCAB_FILES_NAMES = {
     "word_pronunciation_file": "word_pronunciation.json",
 }
 
-PRETRAINED_VOCAB_FILES_MAP = {
-    "vocab_file": {
-        "weiweishi/roc-bert-base-zh": "https://huggingface.co/weiweishi/roc-bert-base-zh/resolve/main/vocab.txt"
-    },
-    "word_shape_file": {
-        "weiweishi/roc-bert-base-zh": "https://huggingface.co/weiweishi/roc-bert-base-zh/resolve/main/word_shape.json"
-    },
-    "word_pronunciation_file": {
-        "weiweishi/roc-bert-base-zh": (
-            "https://huggingface.co/weiweishi/roc-bert-base-zh/resolve/main/word_pronunciation.json"
-        )
-    },
-}
-
-PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {
-    "weiweishi/roc-bert-base-zh": 512,
-}
-
-PRETRAINED_INIT_CONFIGURATION = {
-    "weiweishi/roc-bert-base-zh": {"do_lower_case": True},
-}
-
 
 # Copied from transformers.models.bert.tokenization_bert.load_vocab
 def load_vocab(vocab_file):
@@ -135,9 +113,6 @@ class RoCBertTokenizer(PreTrainedTokenizer):
     """
 
     vocab_files_names = VOCAB_FILES_NAMES
-    pretrained_vocab_files_map = PRETRAINED_VOCAB_FILES_MAP
-    pretrained_init_configuration = PRETRAINED_INIT_CONFIGURATION
-    max_model_input_sizes = PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES
 
     def __init__(
         self,
@@ -156,20 +131,6 @@ class RoCBertTokenizer(PreTrainedTokenizer):
         strip_accents=None,
         **kwargs,
     ):
-        super().__init__(
-            do_lower_case=do_lower_case,
-            do_basic_tokenize=do_basic_tokenize,
-            never_split=never_split,
-            unk_token=unk_token,
-            sep_token=sep_token,
-            pad_token=pad_token,
-            cls_token=cls_token,
-            mask_token=mask_token,
-            tokenize_chinese_chars=tokenize_chinese_chars,
-            strip_accents=strip_accents,
-            **kwargs,
-        )
-
         for cur_file in [vocab_file, word_shape_file, word_pronunciation_file]:
             if cur_file is None or not os.path.isfile(cur_file):
                 raise ValueError(
@@ -195,7 +156,20 @@ class RoCBertTokenizer(PreTrainedTokenizer):
                 tokenize_chinese_chars=tokenize_chinese_chars,
                 strip_accents=strip_accents,
             )
-        self.wordpiece_tokenizer = RoCBertWordpieceTokenizer(vocab=self.vocab, unk_token=self.unk_token)
+        self.wordpiece_tokenizer = RoCBertWordpieceTokenizer(vocab=self.vocab, unk_token=str(unk_token))
+        super().__init__(
+            do_lower_case=do_lower_case,
+            do_basic_tokenize=do_basic_tokenize,
+            never_split=never_split,
+            unk_token=unk_token,
+            sep_token=sep_token,
+            pad_token=pad_token,
+            cls_token=cls_token,
+            mask_token=mask_token,
+            tokenize_chinese_chars=tokenize_chinese_chars,
+            strip_accents=strip_accents,
+            **kwargs,
+        )
 
     @property
     def do_lower_case(self):
@@ -210,10 +184,12 @@ class RoCBertTokenizer(PreTrainedTokenizer):
         return dict(self.vocab, **self.added_tokens_encoder)
 
     # Copied from transformers.models.bert.tokenization_bert.BertTokenizer._tokenize
-    def _tokenize(self, text):
+    def _tokenize(self, text, split_special_tokens=False):
         split_tokens = []
         if self.do_basic_tokenize:
-            for token in self.basic_tokenizer.tokenize(text, never_split=self.all_special_tokens):
+            for token in self.basic_tokenizer.tokenize(
+                text, never_split=self.all_special_tokens if not split_special_tokens else None
+            ):
                 # If the token is part of the never_split set
                 if token in self.basic_tokenizer.never_split:
                     split_tokens.append(token)

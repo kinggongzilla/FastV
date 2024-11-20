@@ -34,7 +34,6 @@ if is_tf_available():
     import tensorflow as tf
 
     from transformers import TFMobileViTForImageClassification, TFMobileViTForSemanticSegmentation, TFMobileViTModel
-    from transformers.models.mobilevit.modeling_tf_mobilevit import TF_MOBILEVIT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -59,7 +58,7 @@ class TFMobileViTModelTester:
         image_size=32,
         patch_size=2,
         num_channels=3,
-        last_hidden_size=640,
+        last_hidden_size=32,
         num_attention_heads=4,
         hidden_act="silu",
         conv_kernel_size=3,
@@ -118,6 +117,8 @@ class TFMobileViTModelTester:
             attention_probs_dropout_prob=self.attention_probs_dropout_prob,
             classifier_dropout_prob=self.classifier_dropout_prob,
             initializer_range=self.initializer_range,
+            hidden_sizes=[12, 16, 20],
+            neck_hidden_sizes=[8, 8, 16, 16, 32, 32, 32],
         )
 
     def create_and_check_model(self, config, pixel_values, labels, pixel_labels):
@@ -364,9 +365,9 @@ class TFMobileViTModelTest(TFModelTesterMixin, PipelineTesterMixin, unittest.Tes
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in TF_MOBILEVIT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = TFMobileViTModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "apple/mobilevit-small"
+        model = TFMobileViTModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 # We will verify our results on an image of cute cats

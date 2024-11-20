@@ -44,7 +44,6 @@ if is_torch_available():
     from torch import nn
 
     from transformers import GroupViTModel, GroupViTTextModel, GroupViTVisionModel
-    from transformers.models.groupvit.modeling_groupvit import GROUPVIT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -270,6 +269,18 @@ class GroupViTVisionModelTest(ModelTesterMixin, unittest.TestCase):
     def test_training_gradient_checkpointing(self):
         pass
 
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing_use_reentrant(self):
+        pass
+
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing_use_reentrant_false(self):
+        pass
+
     @unittest.skip(reason="GroupViTVisionModel has no base class and is not available in MODEL_MAPPING")
     def test_save_load_fast_init_from_base(self):
         pass
@@ -340,9 +351,9 @@ class GroupViTVisionModelTest(ModelTesterMixin, unittest.TestCase):
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in GROUPVIT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = GroupViTVisionModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "nvidia/groupvit-gcc-yfcc"
+        model = GroupViTVisionModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 class GroupViTTextModelTester:
@@ -356,7 +367,7 @@ class GroupViTTextModelTester:
         use_labels=True,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=37,
         dropout=0.1,
@@ -454,6 +465,18 @@ class GroupViTTextModelTest(ModelTesterMixin, unittest.TestCase):
     def test_training_gradient_checkpointing(self):
         pass
 
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing_use_reentrant(self):
+        pass
+
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing_use_reentrant_false(self):
+        pass
+
     @unittest.skip(reason="GroupViTTextModel does not use inputs_embeds")
     def test_inputs_embeds(self):
         pass
@@ -468,9 +491,9 @@ class GroupViTTextModelTest(ModelTesterMixin, unittest.TestCase):
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in GROUPVIT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = GroupViTTextModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "nvidia/groupvit-gcc-yfcc"
+        model = GroupViTTextModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 class GroupViTModelTester:
@@ -483,6 +506,7 @@ class GroupViTModelTester:
         self.parent = parent
         self.text_model_tester = GroupViTTextModelTester(parent, **text_kwargs)
         self.vision_model_tester = GroupViTVisionModelTester(parent, **vision_kwargs)
+        self.batch_size = self.text_model_tester.batch_size  # need bs for batching_equivalence test
         self.is_training = is_training
 
     def prepare_config_and_inputs(self):
@@ -552,6 +576,10 @@ class GroupViTModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase
     @unittest.skip(reason="GroupViTModel does not have input/output embeddings")
     def test_model_common_attributes(self):
         pass
+
+    # overwritten from parent as this equivalent test needs a specific `seed` and hard to get a good one!
+    def check_pt_tf_outputs(self, tf_outputs, pt_outputs, model_class, tol=2e-5, name="outputs", attributes=None):
+        super().check_pt_tf_outputs(tf_outputs, pt_outputs, model_class, tol=tol, name=name, attributes=attributes)
 
     @is_pt_tf_cross_test
     def test_pt_tf_model_equivalence(self):
@@ -677,9 +705,9 @@ class GroupViTModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in GROUPVIT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = GroupViTModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "nvidia/groupvit-gcc-yfcc"
+        model = GroupViTModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 # We will verify our results on an image of cute cats

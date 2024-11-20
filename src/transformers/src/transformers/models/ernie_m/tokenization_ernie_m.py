@@ -36,27 +36,6 @@ RESOURCE_FILES_NAMES = {
     "vocab_file": "vocab.txt",
 }
 
-PRETRAINED_VOCAB_FILES_MAP = {
-    "vocab_file": {
-        "ernie-m-base": "https://huggingface.co/susnato/ernie-m-base_pytorch/blob/main/vocab.txt",
-        "ernie-m-large": "https://huggingface.co/susnato/ernie-m-base_pytorch/blob/main/vocab.txt",
-    },
-    "sentencepiece_model_file": {
-        "ernie-m-base": "https://huggingface.co/susnato/ernie-m-base_pytorch/blob/main/sentencepiece.bpe.model",
-        "ernie-m-large": "https://huggingface.co/susnato/ernie-m-base_pytorch/blob/main/sentencepiece.bpe.model",
-    },
-}
-
-PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {
-    "ernie-m-base": 514,
-    "ernie-m-large": 514,
-}
-
-PRETRAINED_INIT_CONFIGURATION = {
-    "ernie-m-base": {"do_lower_case": False},
-    "ernie-m-large": {"do_lower_case": False},
-}
-
 
 # Adapted from paddlenlp.transformers.ernie_m.tokenizer.ErnieMTokenizer
 class ErnieMTokenizer(PreTrainedTokenizer):
@@ -89,9 +68,6 @@ class ErnieMTokenizer(PreTrainedTokenizer):
     model_input_names: List[str] = ["input_ids"]
 
     vocab_files_names = VOCAB_FILES_NAMES
-    pretrained_init_configuration = PRETRAINED_INIT_CONFIGURATION
-    max_model_input_sizes = PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES
-    pretrained_vocab_files_map = PRETRAINED_VOCAB_FILES_MAP
     resource_files_names = RESOURCE_FILES_NAMES
 
     def __init__(
@@ -112,6 +88,19 @@ class ErnieMTokenizer(PreTrainedTokenizer):
         # is included in the raw text, there should be a match in a non-normalized sentence.
 
         self.sp_model_kwargs = {} if sp_model_kwargs is None else sp_model_kwargs
+
+        self.do_lower_case = do_lower_case
+        self.sentencepiece_model_ckpt = sentencepiece_model_ckpt
+        self.sp_model = spm.SentencePieceProcessor(**self.sp_model_kwargs)
+        self.sp_model.Load(sentencepiece_model_ckpt)
+
+        # to mimic paddlenlp.transformers.ernie_m.tokenizer.ErnieMTokenizer functioning
+        if vocab_file is not None:
+            self.vocab = self.load_vocab(filepath=vocab_file)
+        else:
+            self.vocab = {self.sp_model.id_to_piece(id): id for id in range(self.sp_model.get_piece_size())}
+        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
+
         super().__init__(
             do_lower_case=do_lower_case,
             unk_token=unk_token,
@@ -124,17 +113,6 @@ class ErnieMTokenizer(PreTrainedTokenizer):
             sp_model_kwargs=self.sp_model_kwargs,
             **kwargs,
         )
-        self.do_lower_case = do_lower_case
-        self.sentencepiece_model_ckpt = sentencepiece_model_ckpt
-        self.sp_model = spm.SentencePieceProcessor(**self.sp_model_kwargs)
-        self.sp_model.Load(sentencepiece_model_ckpt)
-
-        # to mimic paddlenlp.transformers.ernie_m.tokenizer.ErnieMTokenizer functioning
-        if vocab_file is not None:
-            self.vocab = self.load_vocab(filepath=vocab_file)
-        else:
-            self.vocab = {self.sp_model.id_to_piece(id): id for id in range(self.sp_model.get_piece_size())}
-        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
 
     def get_offset_mapping(self, text):
         if text is None:

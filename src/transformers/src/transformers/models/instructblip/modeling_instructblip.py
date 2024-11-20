@@ -47,10 +47,8 @@ logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "Salesforce/instructblip-flan-t5-xl"
 
-INSTRUCTBLIP_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "Salesforce/instructblip-flan-t5-xl",
-    # See all InstructBLIP models at https://huggingface.co/models?filter=instructblip
-]
+
+from ..deprecated._archive_maps import INSTRUCTBLIP_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 @dataclass
@@ -110,7 +108,7 @@ class InstructBlipVisionEmbeddings(nn.Module):
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
         batch_size = pixel_values.shape[0]
         target_dtype = self.patch_embedding.weight.dtype
-        patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
+        patch_embeds = self.patch_embedding(pixel_values.to(dtype=target_dtype))  # shape = [*, width, grid, grid]
         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)
 
         class_embeds = self.class_embedding.expand(batch_size, 1, -1).to(target_dtype)
@@ -275,7 +273,12 @@ class InstructBlipPreTrainedModel(PreTrainedModel):
     config_class = InstructBlipConfig
     base_model_prefix = "blip"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["InstructBlipAttention", "InstructBlipQFormerMultiHeadAttention"]
+    _no_split_modules = [
+        "InstructBlipQFormerEmbeddings",
+        "InstructBlipAttention",
+        "InstructBlipQFormerMultiHeadAttention",
+        "InstructBlipQFormerSelfOutput",
+    ]
     _keep_in_fp32_modules = []
 
     # Copied from transformers.models.blip_2.modeling_blip_2.Blip2PreTrainedModel._init_weights with Blip2->InstructBlip
@@ -298,10 +301,6 @@ class InstructBlipPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
         elif isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
-
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, InstructBlipEncoder):
-            module.gradient_checkpointing = value
 
 
 INSTRUCTBLIP_START_DOCSTRING = r"""
@@ -457,17 +456,11 @@ class InstructBlipEncoder(nn.Module):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(encoder_layer),
+                layer_outputs = self._gradient_checkpointing_func(
+                    encoder_layer.__call__,
                     hidden_states,
                     attention_mask,
+                    output_attentions,
                 )
             else:
                 layer_outputs = encoder_layer(
@@ -558,7 +551,6 @@ class InstructBlipVisionModel(InstructBlipPreTrainedModel):
         return self.embeddings
 
 
-# Copied from transformers.models.blip_2.modeling_blip_2.Blip2QFormerMultiHeadAttention with Blip2->InstructBlip
 class InstructBlipQFormerMultiHeadAttention(nn.Module):
     def __init__(self, config, is_cross_attention=False):
         super().__init__()
@@ -659,13 +651,14 @@ class InstructBlipQFormerMultiHeadAttention(nn.Module):
                 attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
 
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        attention_scores_dtype = attention_scores.dtype
 
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
-        attention_probs = nn.Softmax(dim=-1)(attention_scores)
+        attention_probs = nn.Softmax(dim=-1)(attention_scores).to(attention_scores_dtype)
 
         if is_cross_attention and self.save_attention:
             self.save_attention_map(attention_probs)
@@ -930,19 +923,12 @@ class InstructBlipQFormerEncoder(nn.Module):
 
             if getattr(self.config, "gradient_checkpointing", False) and self.training:
                 if use_cache:
-                    logger.warn(
+                    logger.warning(
                         "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
                     )
                     use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions, query_length)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
+                layer_outputs = self._gradient_checkpointing_func(
+                    layer_module.__call__,
                     hidden_states,
                     attention_mask,
                     layer_head_mask,
@@ -1038,6 +1024,7 @@ class InstructBlipQFormerEmbeddings(nn.Module):
         else:
             embeddings = query_embeds
 
+        embeddings = embeddings.to(self.layernorm.weight.dtype)
         embeddings = self.layernorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -1118,19 +1105,19 @@ class InstructBlipQFormerModel(InstructBlipPreTrainedModel):
 
     def forward(
         self,
-        input_ids,
-        attention_mask=None,
-        position_ids=None,
-        query_embeds=None,
-        head_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_values=None,
-        use_cache=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-    ):
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        query_embeds: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.FloatTensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
             Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
@@ -1187,13 +1174,13 @@ class InstructBlipQFormerModel(InstructBlipPreTrainedModel):
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if encoder_hidden_states is not None:
-            if type(encoder_hidden_states) == list:
+            if isinstance(encoder_hidden_states, list):
                 encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states[0].size()
             else:
                 encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
 
-            if type(encoder_attention_mask) == list:
+            if isinstance(encoder_attention_mask, list):
                 encoder_extended_attention_mask = [self.invert_attention_mask(mask) for mask in encoder_attention_mask]
             elif encoder_attention_mask is None:
                 encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
@@ -1548,16 +1535,33 @@ class InstructBlipForConditionalGeneration(InstructBlipPreTrainedModel):
         inputs_embeds = self.get_input_embeddings()(input_ids)
         inputs_embeds = torch.cat([language_model_inputs, inputs_embeds.to(language_model_inputs.device)], dim=1)
 
+        # add image_embeds length to max_length, so that the final max_length in counted only on token embeds
+        # -1 is to account for the prepended BOS after `generate.`
+        if not self.language_model.config.is_encoder_decoder:
+            generate_kwargs["max_length"] = generate_kwargs.get("max_length", 20) + language_model_inputs.shape[1] - 1
+            generate_kwargs["min_length"] = generate_kwargs.get("min_length", 0) + language_model_inputs.shape[1]
+
         outputs = self.language_model.generate(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             **generate_kwargs,
         )
 
-        # the InstructBLIP authors used inconsistent tokenizer/model files during training,
-        # with the tokenizer's bos token being set to </s> which has ID=2,
-        # whereas the model's text config has bos token id = 0
-        if self.config.text_config.architectures[0] == "LLaMAForCausalLM":
-            outputs[outputs == 0] = 2
+        # this is a temporary workaround to be consistent with other generation models and
+        # have BOS as the first token, even though under the hood we are calling LM with embeds
+        if not self.language_model.config.is_encoder_decoder:
+            # the InstructBLIP authors used inconsistent tokenizer/model files during training,
+            # with the tokenizer's bos token being set to </s> which has ID=2,
+            # whereas the model's text config has bos token id = 0
+            bos_token_id = (
+                2
+                if self.config.text_config.architectures[0] == "LLaMAForCausalLM"
+                else self.config.text_config.bos_token_id
+            )
+            bos_tokens = torch.LongTensor([[bos_token_id]]).repeat(batch_size, 1).to(image_embeds.device)
+            if not isinstance(outputs, torch.Tensor):
+                outputs.sequences = torch.cat([bos_tokens, outputs.sequences], dim=-1)
+            else:
+                outputs = torch.cat([bos_tokens, outputs], dim=-1)
 
         return outputs

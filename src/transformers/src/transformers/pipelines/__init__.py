@@ -12,7 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import io
 import json
 import os
 import warnings
@@ -20,7 +19,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from huggingface_hub import model_info
-from numpy import isin
 
 from ..configuration_utils import PretrainedConfig
 from ..dynamic_module_utils import get_class_from_dynamic_module
@@ -29,13 +27,18 @@ from ..image_processing_utils import BaseImageProcessor
 from ..models.auto.configuration_auto import AutoConfig
 from ..models.auto.feature_extraction_auto import FEATURE_EXTRACTOR_MAPPING, AutoFeatureExtractor
 from ..models.auto.image_processing_auto import IMAGE_PROCESSOR_MAPPING, AutoImageProcessor
-from ..models.auto.modeling_auto import AutoModelForDepthEstimation
+from ..models.auto.modeling_auto import AutoModelForDepthEstimation, AutoModelForImageToImage
 from ..models.auto.tokenization_auto import TOKENIZER_MAPPING, AutoTokenizer
 from ..tokenization_utils import PreTrainedTokenizer
 from ..utils import (
+    CONFIG_NAME,
     HUGGINGFACE_CO_RESOLVE_ENDPOINT,
+    cached_file,
+    extract_commit_hash,
+    find_adapter_config_file,
     is_kenlm_available,
     is_offline_mode,
+    is_peft_available,
     is_pyctcdecode_available,
     is_tf_available,
     is_torch_available,
@@ -61,7 +64,9 @@ from .document_question_answering import DocumentQuestionAnsweringPipeline
 from .feature_extraction import FeatureExtractionPipeline
 from .fill_mask import FillMaskPipeline
 from .image_classification import ImageClassificationPipeline
+from .image_feature_extraction import ImageFeatureExtractionPipeline
 from .image_segmentation import ImageSegmentationPipeline
+from .image_to_image import ImageToImagePipeline
 from .image_to_text import ImageToTextPipeline
 from .mask_generation import MaskGenerationPipeline
 from .object_detection import ObjectDetectionPipeline
@@ -70,6 +75,7 @@ from .table_question_answering import TableQuestionAnsweringArgumentHandler, Tab
 from .text2text_generation import SummarizationPipeline, Text2TextGenerationPipeline, TranslationPipeline
 from .text_classification import TextClassificationPipeline
 from .text_generation import TextGenerationPipeline
+from .text_to_audio import TextToAudioPipeline
 from .token_classification import (
     AggregationStrategy,
     NerPipeline,
@@ -88,11 +94,6 @@ if is_tf_available():
     import tensorflow as tf
 
     from ..models.auto.modeling_tf_auto import (
-        TF_MODEL_FOR_QUESTION_ANSWERING_MAPPING,
-        TF_MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING,
-        TF_MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING,
-        TF_MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
-        TF_MODEL_WITH_LM_HEAD_MAPPING,
         TFAutoModel,
         TFAutoModelForCausalLM,
         TFAutoModelForImageClassification,
@@ -110,13 +111,6 @@ if is_torch_available():
     import torch
 
     from ..models.auto.modeling_auto import (
-        MODEL_FOR_MASKED_LM_MAPPING,
-        MODEL_FOR_QUESTION_ANSWERING_MAPPING,
-        MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING,
-        MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING,
-        MODEL_FOR_TABLE_QUESTION_ANSWERING_MAPPING,
-        MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING,
-        MODEL_FOR_VISUAL_QUESTION_ANSWERING_MAPPING,
         AutoModel,
         AutoModelForAudioClassification,
         AutoModelForCausalLM,
@@ -133,6 +127,8 @@ if is_torch_available():
         AutoModelForSequenceClassification,
         AutoModelForSpeechSeq2Seq,
         AutoModelForTableQuestionAnswering,
+        AutoModelForTextToSpectrogram,
+        AutoModelForTextToWaveform,
         AutoModelForTokenClassification,
         AutoModelForVideoClassification,
         AutoModelForVision2Seq,
@@ -156,6 +152,7 @@ TASK_ALIASES = {
     "sentiment-analysis": "text-classification",
     "ner": "token-classification",
     "vqa": "visual-question-answering",
+    "text-to-speech": "text-to-audio",
 }
 SUPPORTED_TASKS = {
     "audio-classification": {
@@ -172,11 +169,23 @@ SUPPORTED_TASKS = {
         "default": {"model": {"pt": ("facebook/wav2vec2-base-960h", "55bb623")}},
         "type": "multimodal",
     },
+    "text-to-audio": {
+        "impl": TextToAudioPipeline,
+        "tf": (),
+        "pt": (AutoModelForTextToWaveform, AutoModelForTextToSpectrogram) if is_torch_available() else (),
+        "default": {"model": {"pt": ("suno/bark-small", "645cfba")}},
+        "type": "text",
+    },
     "feature-extraction": {
         "impl": FeatureExtractionPipeline,
         "tf": (TFAutoModel,) if is_tf_available() else (),
         "pt": (AutoModel,) if is_torch_available() else (),
-        "default": {"model": {"pt": ("distilbert-base-cased", "935ac13"), "tf": ("distilbert-base-cased", "935ac13")}},
+        "default": {
+            "model": {
+                "pt": ("distilbert/distilbert-base-cased", "935ac13"),
+                "tf": ("distilbert/distilbert-base-cased", "935ac13"),
+            }
+        },
         "type": "multimodal",
     },
     "text-classification": {
@@ -185,8 +194,8 @@ SUPPORTED_TASKS = {
         "pt": (AutoModelForSequenceClassification,) if is_torch_available() else (),
         "default": {
             "model": {
-                "pt": ("distilbert-base-uncased-finetuned-sst-2-english", "af0f99b"),
-                "tf": ("distilbert-base-uncased-finetuned-sst-2-english", "af0f99b"),
+                "pt": ("distilbert/distilbert-base-uncased-finetuned-sst-2-english", "af0f99b"),
+                "tf": ("distilbert/distilbert-base-uncased-finetuned-sst-2-english", "af0f99b"),
             },
         },
         "type": "text",
@@ -209,8 +218,8 @@ SUPPORTED_TASKS = {
         "pt": (AutoModelForQuestionAnswering,) if is_torch_available() else (),
         "default": {
             "model": {
-                "pt": ("distilbert-base-cased-distilled-squad", "626af31"),
-                "tf": ("distilbert-base-cased-distilled-squad", "626af31"),
+                "pt": ("distilbert/distilbert-base-cased-distilled-squad", "626af31"),
+                "tf": ("distilbert/distilbert-base-cased-distilled-squad", "626af31"),
             },
         },
         "type": "text",
@@ -249,14 +258,21 @@ SUPPORTED_TASKS = {
         "impl": FillMaskPipeline,
         "tf": (TFAutoModelForMaskedLM,) if is_tf_available() else (),
         "pt": (AutoModelForMaskedLM,) if is_torch_available() else (),
-        "default": {"model": {"pt": ("distilroberta-base", "ec58a5b"), "tf": ("distilroberta-base", "ec58a5b")}},
+        "default": {
+            "model": {
+                "pt": ("distilbert/distilroberta-base", "ec58a5b"),
+                "tf": ("distilbert/distilroberta-base", "ec58a5b"),
+            }
+        },
         "type": "text",
     },
     "summarization": {
         "impl": SummarizationPipeline,
         "tf": (TFAutoModelForSeq2SeqLM,) if is_tf_available() else (),
         "pt": (AutoModelForSeq2SeqLM,) if is_torch_available() else (),
-        "default": {"model": {"pt": ("sshleifer/distilbart-cnn-12-6", "a4f8f3e"), "tf": ("t5-small", "d769bba")}},
+        "default": {
+            "model": {"pt": ("sshleifer/distilbart-cnn-12-6", "a4f8f3e"), "tf": ("google-t5/t5-small", "d769bba")}
+        },
         "type": "text",
     },
     # This task is a special case as it's parametrized by SRC, TGT languages.
@@ -265,9 +281,9 @@ SUPPORTED_TASKS = {
         "tf": (TFAutoModelForSeq2SeqLM,) if is_tf_available() else (),
         "pt": (AutoModelForSeq2SeqLM,) if is_torch_available() else (),
         "default": {
-            ("en", "fr"): {"model": {"pt": ("t5-base", "686f1db"), "tf": ("t5-base", "686f1db")}},
-            ("en", "de"): {"model": {"pt": ("t5-base", "686f1db"), "tf": ("t5-base", "686f1db")}},
-            ("en", "ro"): {"model": {"pt": ("t5-base", "686f1db"), "tf": ("t5-base", "686f1db")}},
+            ("en", "fr"): {"model": {"pt": ("google-t5/t5-base", "686f1db"), "tf": ("google-t5/t5-base", "686f1db")}},
+            ("en", "de"): {"model": {"pt": ("google-t5/t5-base", "686f1db"), "tf": ("google-t5/t5-base", "686f1db")}},
+            ("en", "ro"): {"model": {"pt": ("google-t5/t5-base", "686f1db"), "tf": ("google-t5/t5-base", "686f1db")}},
         },
         "type": "text",
     },
@@ -275,14 +291,14 @@ SUPPORTED_TASKS = {
         "impl": Text2TextGenerationPipeline,
         "tf": (TFAutoModelForSeq2SeqLM,) if is_tf_available() else (),
         "pt": (AutoModelForSeq2SeqLM,) if is_torch_available() else (),
-        "default": {"model": {"pt": ("t5-base", "686f1db"), "tf": ("t5-base", "686f1db")}},
+        "default": {"model": {"pt": ("google-t5/t5-base", "686f1db"), "tf": ("google-t5/t5-base", "686f1db")}},
         "type": "text",
     },
     "text-generation": {
         "impl": TextGenerationPipeline,
         "tf": (TFAutoModelForCausalLM,) if is_tf_available() else (),
         "pt": (AutoModelForCausalLM,) if is_torch_available() else (),
-        "default": {"model": {"pt": ("gpt2", "6c0e608"), "tf": ("gpt2", "6c0e608")}},
+        "default": {"model": {"pt": ("openai-community/gpt2", "6c0e608"), "tf": ("openai-community/gpt2", "6c0e608")}},
         "type": "text",
     },
     "zero-shot-classification": {
@@ -290,8 +306,14 @@ SUPPORTED_TASKS = {
         "tf": (TFAutoModelForSequenceClassification,) if is_tf_available() else (),
         "pt": (AutoModelForSequenceClassification,) if is_torch_available() else (),
         "default": {
-            "model": {"pt": ("facebook/bart-large-mnli", "c626438"), "tf": ("roberta-large-mnli", "130fb28")},
-            "config": {"pt": ("facebook/bart-large-mnli", "c626438"), "tf": ("roberta-large-mnli", "130fb28")},
+            "model": {
+                "pt": ("facebook/bart-large-mnli", "c626438"),
+                "tf": ("FacebookAI/roberta-large-mnli", "130fb28"),
+            },
+            "config": {
+                "pt": ("facebook/bart-large-mnli", "c626438"),
+                "tf": ("FacebookAI/roberta-large-mnli", "130fb28"),
+            },
         },
         "type": "text",
     },
@@ -335,6 +357,18 @@ SUPPORTED_TASKS = {
             "model": {
                 "pt": ("google/vit-base-patch16-224", "5dca96d"),
                 "tf": ("google/vit-base-patch16-224", "5dca96d"),
+            }
+        },
+        "type": "image",
+    },
+    "image-feature-extraction": {
+        "impl": ImageFeatureExtractionPipeline,
+        "tf": (TFAutoModel,) if is_tf_available() else (),
+        "pt": (AutoModel,) if is_torch_available() else (),
+        "default": {
+            "model": {
+                "pt": ("google/vit-base-patch16-224", "3f49326"),
+                "tf": ("google/vit-base-patch16-224", "3f49326"),
             }
         },
         "type": "image",
@@ -393,16 +427,25 @@ SUPPORTED_TASKS = {
         "default": {"model": {"pt": ("facebook/sam-vit-huge", "997b15")}},
         "type": "multimodal",
     },
+    "image-to-image": {
+        "impl": ImageToImagePipeline,
+        "tf": (),
+        "pt": (AutoModelForImageToImage,) if is_torch_available() else (),
+        "default": {"model": {"pt": ("caidas/swin2SR-classical-sr-x2-64", "4aaedcb")}},
+        "type": "image",
+    },
 }
 
 NO_FEATURE_EXTRACTOR_TASKS = set()
 NO_IMAGE_PROCESSOR_TASKS = set()
 NO_TOKENIZER_TASKS = set()
+
 # Those model configs are special, they are generic over their task, meaning
 # any tokenizer/feature_extractor might be use for a given model so we cannot
 # use the statically defined TOKENIZER_MAPPING and FEATURE_EXTRACTOR_MAPPING to
 # see if the model defines such objects or not.
-MULTI_MODEL_CONFIGS = {"SpeechEncoderDecoderConfig", "VisionEncoderDecoderConfig", "VisionTextDualEncoderConfig"}
+MULTI_MODEL_AUDIO_CONFIGS = {"SpeechEncoderDecoderConfig"}
+MULTI_MODEL_VISION_CONFIGS = {"VisionEncoderDecoderConfig", "VisionTextDualEncoderConfig"}
 for task, values in SUPPORTED_TASKS.items():
     if values["type"] == "text":
         NO_FEATURE_EXTRACTOR_TASKS.add(task)
@@ -425,11 +468,21 @@ def get_supported_tasks() -> List[str]:
     return PIPELINE_REGISTRY.get_supported_tasks()
 
 
-def get_task(model: str, use_auth_token: Optional[str] = None) -> str:
+def get_task(model: str, token: Optional[str] = None, **deprecated_kwargs) -> str:
+    use_auth_token = deprecated_kwargs.pop("use_auth_token", None)
+    if use_auth_token is not None:
+        warnings.warn(
+            "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+            FutureWarning,
+        )
+        if token is not None:
+            raise ValueError("`token` and `use_auth_token` are both specified. Please set only the argument `token`.")
+        token = use_auth_token
+
     if is_offline_mode():
         raise RuntimeError("You cannot infer task automatically within `pipeline` when using offline mode")
     try:
-        info = model_info(model, token=use_auth_token)
+        info = model_info(model, token=token)
     except Exception as e:
         raise RuntimeError(f"Instantiating a pipeline without a task set raised an error: {e}")
     if not info.pipeline_tag:
@@ -459,8 +512,10 @@ def check_task(task: str) -> Tuple[str, Dict, Any]:
             - `"feature-extraction"`
             - `"fill-mask"`
             - `"image-classification"`
+            - `"image-feature-extraction"`
             - `"image-segmentation"`
             - `"image-to-text"`
+            - `"image-to-image"`
             - `"object-detection"`
             - `"question-answering"`
             - `"summarization"`
@@ -468,11 +523,12 @@ def check_task(task: str) -> Tuple[str, Dict, Any]:
             - `"text2text-generation"`
             - `"text-classification"` (alias `"sentiment-analysis"` available)
             - `"text-generation"`
+            - `"text-to-audio"` (alias `"text-to-speech"` available)
             - `"token-classification"` (alias `"ner"` available)
             - `"translation"`
             - `"translation_xx_to_yy"`
             - `"video-classification"`
-            - `"visual-question-answering"`
+            - `"visual-question-answering"` (alias `"vqa"` available)
             - `"zero-shot-classification"`
             - `"zero-shot-image-classification"`
             - `"zero-shot-object-detection"`
@@ -513,7 +569,7 @@ def pipeline(
     framework: Optional[str] = None,
     revision: Optional[str] = None,
     use_fast: bool = True,
-    use_auth_token: Optional[Union[str, bool]] = None,
+    token: Optional[Union[str, bool]] = None,
     device: Optional[Union[int, str, "torch.device"]] = None,
     device_map=None,
     torch_dtype=None,
@@ -543,7 +599,9 @@ def pipeline(
             - `"feature-extraction"`: will return a [`FeatureExtractionPipeline`].
             - `"fill-mask"`: will return a [`FillMaskPipeline`]:.
             - `"image-classification"`: will return a [`ImageClassificationPipeline`].
+            - `"image-feature-extraction"`: will return an [`ImageFeatureExtractionPipeline`].
             - `"image-segmentation"`: will return a [`ImageSegmentationPipeline`].
+            - `"image-to-image"`: will return a [`ImageToImagePipeline`].
             - `"image-to-text"`: will return a [`ImageToTextPipeline`].
             - `"mask-generation"`: will return a [`MaskGenerationPipeline`].
             - `"object-detection"`: will return a [`ObjectDetectionPipeline`].
@@ -554,6 +612,7 @@ def pipeline(
             - `"text-classification"` (alias `"sentiment-analysis"` available): will return a
               [`TextClassificationPipeline`].
             - `"text-generation"`: will return a [`TextGenerationPipeline`]:.
+            - `"text-to-audio"` (alias `"text-to-speech"` available): will return a [`TextToAudioPipeline`]:.
             - `"token-classification"` (alias `"ner"` available): will return a [`TokenClassificationPipeline`].
             - `"translation"`: will return a [`TranslationPipeline`].
             - `"translation_xx_to_yy"`: will return a [`TranslationPipeline`].
@@ -654,24 +713,36 @@ def pipeline(
 
     >>> # Question answering pipeline, specifying the checkpoint identifier
     >>> oracle = pipeline(
-    ...     "question-answering", model="distilbert-base-cased-distilled-squad", tokenizer="bert-base-cased"
+    ...     "question-answering", model="distilbert/distilbert-base-cased-distilled-squad", tokenizer="google-bert/bert-base-cased"
     ... )
 
     >>> # Named entity recognition pipeline, passing in a specific model and tokenizer
     >>> model = AutoModelForTokenClassification.from_pretrained("dbmdz/bert-large-cased-finetuned-conll03-english")
-    >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+    >>> tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-cased")
     >>> recognizer = pipeline("ner", model=model, tokenizer=tokenizer)
     ```"""
     if model_kwargs is None:
         model_kwargs = {}
     # Make sure we only pass use_auth_token once as a kwarg (it used to be possible to pass it in model_kwargs,
     # this is to keep BC).
-    use_auth_token = model_kwargs.pop("use_auth_token", use_auth_token)
+    use_auth_token = model_kwargs.pop("use_auth_token", None)
+    if use_auth_token is not None:
+        warnings.warn(
+            "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+            FutureWarning,
+        )
+        if token is not None:
+            raise ValueError("`token` and `use_auth_token` are both specified. Please set only the argument `token`.")
+        token = use_auth_token
+
+    code_revision = kwargs.pop("code_revision", None)
+    commit_hash = kwargs.pop("_commit_hash", None)
+
     hub_kwargs = {
         "revision": revision,
-        "use_auth_token": use_auth_token,
+        "token": token,
         "trust_remote_code": trust_remote_code,
-        "_commit_hash": None,
+        "_commit_hash": commit_hash,
     }
 
     if task is None and model is None:
@@ -696,13 +767,55 @@ def pipeline(
     if isinstance(model, Path):
         model = str(model)
 
+    if commit_hash is None:
+        pretrained_model_name_or_path = None
+        if isinstance(config, str):
+            pretrained_model_name_or_path = config
+        elif config is None and isinstance(model, str):
+            pretrained_model_name_or_path = model
+
+        if not isinstance(config, PretrainedConfig) and pretrained_model_name_or_path is not None:
+            # We make a call to the config file first (which may be absent) to get the commit hash as soon as possible
+            resolved_config_file = cached_file(
+                pretrained_model_name_or_path,
+                CONFIG_NAME,
+                _raise_exceptions_for_gated_repo=False,
+                _raise_exceptions_for_missing_entries=False,
+                _raise_exceptions_for_connection_errors=False,
+                cache_dir=model_kwargs.get("cache_dir"),
+                **hub_kwargs,
+            )
+            hub_kwargs["_commit_hash"] = extract_commit_hash(resolved_config_file, commit_hash)
+        else:
+            hub_kwargs["_commit_hash"] = getattr(config, "_commit_hash", None)
+
     # Config is the primordial information item.
     # Instantiate config if needed
     if isinstance(config, str):
-        config = AutoConfig.from_pretrained(config, _from_pipeline=task, **hub_kwargs, **model_kwargs)
+        config = AutoConfig.from_pretrained(
+            config, _from_pipeline=task, code_revision=code_revision, **hub_kwargs, **model_kwargs
+        )
         hub_kwargs["_commit_hash"] = config._commit_hash
     elif config is None and isinstance(model, str):
-        config = AutoConfig.from_pretrained(model, _from_pipeline=task, **hub_kwargs, **model_kwargs)
+        # Check for an adapter file in the model path if PEFT is available
+        if is_peft_available():
+            # `find_adapter_config_file` doesn't accept `trust_remote_code`
+            _hub_kwargs = {k: v for k, v in hub_kwargs.items() if k != "trust_remote_code"}
+            maybe_adapter_path = find_adapter_config_file(
+                model,
+                token=hub_kwargs["token"],
+                revision=hub_kwargs["revision"],
+                _commit_hash=hub_kwargs["_commit_hash"],
+            )
+
+            if maybe_adapter_path is not None:
+                with open(maybe_adapter_path, "r", encoding="utf-8") as f:
+                    adapter_config = json.load(f)
+                    model = adapter_config["base_model_name_or_path"]
+
+        config = AutoConfig.from_pretrained(
+            model, _from_pipeline=task, code_revision=code_revision, **hub_kwargs, **model_kwargs
+        )
         hub_kwargs["_commit_hash"] = config._commit_hash
 
     custom_tasks = {}
@@ -720,10 +833,10 @@ def pipeline(
     if task is None and model is not None:
         if not isinstance(model, str):
             raise RuntimeError(
-                "Inferring the task automatically requires to check the hub with a model_id defined as a `str`."
+                "Inferring the task automatically requires to check the hub with a model_id defined as a `str`. "
                 f"{model} is not a valid model_id."
             )
-        task = get_task(model, use_auth_token)
+        task = get_task(model, token)
 
     # Retrieve the task
     if task in custom_tasks:
@@ -738,7 +851,10 @@ def pipeline(
                 )
             class_ref = targeted_task["impl"]
             pipeline_class = get_class_from_dynamic_module(
-                class_ref, model, revision=revision, use_auth_token=use_auth_token
+                class_ref,
+                model,
+                code_revision=code_revision,
+                **hub_kwargs,
             )
     else:
         normalized_task, targeted_task, task_options = check_task(task)
@@ -777,6 +893,8 @@ def pipeline(
                 'You cannot use both `pipeline(... torch_dtype=..., model_kwargs={"torch_dtype":...})` as those'
                 " arguments might conflict, use only one.)"
             )
+        if isinstance(torch_dtype, str) and hasattr(torch, torch_dtype):
+            torch_dtype = getattr(torch, torch_dtype)
         model_kwargs["torch_dtype"] = torch_dtype
 
     model_name = model if isinstance(model, str) else None
@@ -814,7 +932,10 @@ def pipeline(
         and not load_tokenizer
         and normalized_task not in NO_TOKENIZER_TASKS
         # Using class name to avoid importing the real class.
-        and model_config.__class__.__name__ in MULTI_MODEL_CONFIGS
+        and (
+            model_config.__class__.__name__ in MULTI_MODEL_AUDIO_CONFIGS
+            or model_config.__class__.__name__ in MULTI_MODEL_VISION_CONFIGS
+        )
     ):
         # This is a special category of models, that are fusions of multiple models
         # so the model_config might not define a tokenizer, but it seems to be
@@ -825,8 +946,7 @@ def pipeline(
         and not load_image_processor
         and normalized_task not in NO_IMAGE_PROCESSOR_TASKS
         # Using class name to avoid importing the real class.
-        and model_config.__class__.__name__ in MULTI_MODEL_CONFIGS
-        and normalized_task != "automatic-speech-recognition"
+        and model_config.__class__.__name__ in MULTI_MODEL_VISION_CONFIGS
     ):
         # This is a special category of models, that are fusions of multiple models
         # so the model_config might not define a tokenizer, but it seems to be
@@ -837,7 +957,7 @@ def pipeline(
         and not load_feature_extractor
         and normalized_task not in NO_FEATURE_EXTRACTOR_TASKS
         # Using class name to avoid importing the real class.
-        and model_config.__class__.__name__ in MULTI_MODEL_CONFIGS
+        and model_config.__class__.__name__ in MULTI_MODEL_AUDIO_CONFIGS
     ):
         # This is a special category of models, that are fusions of multiple models
         # so the model_config might not define a tokenizer, but it seems to be

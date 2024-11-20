@@ -1,3 +1,7 @@
 # .gitignore
 __pycache__/
 aokvqa_eval_fastv/
+ocrvqa_eval_fastv/ocrvqa_7b_FASTV_nocache_mt40_72_2.json
+ocrvqa_eval_fastv/ocrvqa_7b_FASTV_nocache_mt40_144_2.json
+ocrvqa_eval_fastv/ocrvqa_7b_FASTV_nocache_mt40_288_2.json
+ocrvqa_eval_fastv/ocrvqa_7b_FASTV_nocache_mt40_432_2.json

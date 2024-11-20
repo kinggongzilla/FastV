@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+import os
+import pickle
 import tempfile
 import unittest
 
-from transformers import T5Config, is_torch_available
+from transformers import UMT5Config, is_torch_available
+from transformers.models.auto.modeling_auto import MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES
 from transformers.testing_utils import (
     require_sentencepiece,
     require_tokenizers,
@@ -23,16 +27,30 @@ from transformers.testing_utils import (
     slow,
     torch_device,
 )
+from transformers.utils import is_torch_fx_available
 
 from ...generation.test_utils import GenerationTesterMixin
-from ...test_modeling_common import ModelTesterMixin, ids_tensor
+from ...test_configuration_common import ConfigTester
+from ...test_modeling_common import ModelTesterMixin, _config_zero_init, ids_tensor
 from ...test_pipeline_mixin import PipelineTesterMixin
+
+
+if is_torch_fx_available():
+    from transformers.utils.fx import symbolic_trace
 
 
 if is_torch_available():
     import torch
 
-    from transformers import AutoTokenizer, UMT5ForConditionalGeneration, UMT5ForQuestionAnswering, UMT5Model
+    from transformers import (
+        AutoTokenizer,
+        UMT5EncoderModel,
+        UMT5ForConditionalGeneration,
+        UMT5ForQuestionAnswering,
+        UMT5ForSequenceClassification,
+        UMT5ForTokenClassification,
+        UMT5Model,
+    )
 
 
 # Copied from test.models.t5.test_modeling_t5.T5ModelTester with T5->UMT5
@@ -43,13 +61,13 @@ class UMT5ModelTester:
         vocab_size=99,
         batch_size=13,
         encoder_seq_length=7,
-        decoder_seq_length=9,
+        decoder_seq_length=7,
         # For common tests
         is_training=True,
         use_attention_mask=True,
         use_labels=False,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         num_attention_heads=4,
         d_ff=37,
         relative_attention_num_buckets=8,
@@ -85,7 +103,7 @@ class UMT5ModelTester:
         self.decoder_layers = decoder_layers
 
     def get_large_model_config(self):
-        return T5Config.from_pretrained("google/umt5-base")
+        return UMT5Config.from_pretrained("google/umt5-base")
 
     def prepare_inputs_dict(
         self,
@@ -131,7 +149,8 @@ class UMT5ModelTester:
         # but when using past, there is no way of knowing if the past input ids had
         # pad tokens in them, which results in incorrect seq_lenth and which in turn results in
         # position_ids being off by num_pad_tokens in past input
-        input_ids = input_ids.clamp(self.pad_token_id + 1)
+        input_ids = input_ids.clamp(self.pad_token_id + 2)
+        input_ids[:, -1] = self.eos_token_id  # Eos Token
         decoder_input_ids = decoder_input_ids.clamp(self.pad_token_id + 1)
 
         config = self.get_config()
@@ -144,7 +163,7 @@ class UMT5ModelTester:
         return config, inputs_dict
 
     def get_pipeline_config(self):
-        return T5Config(
+        return UMT5Config(
             vocab_size=166,  # t5 forces 100 extra tokens
             d_model=self.hidden_size,
             d_ff=self.d_ff,
@@ -162,7 +181,7 @@ class UMT5ModelTester:
         )
 
     def get_config(self):
-        return T5Config(
+        return UMT5Config(
             vocab_size=self.vocab_size,
             d_model=self.hidden_size,
             d_ff=self.d_ff,
@@ -255,21 +274,37 @@ class UMT5ModelTester:
         output = model(**input_dict)["last_hidden_state"]
         self.parent.assertFalse(torch.isnan(output).any().item())
 
+    def create_and_check_with_sequence_classification_head(
+        self,
+        config,
+        input_dict,
+    ):
+        labels = torch.tensor([1] * self.batch_size, dtype=torch.long, device=torch_device)
+        model = UMT5ForSequenceClassification(config=config).to(torch_device).eval()
+        outputs = model(**input_dict, labels=labels)
+        # self.parent.assertEqual(len(outputs), 4)
+        self.parent.assertEqual(outputs["logits"].size(), (self.batch_size, config.num_labels))
+        self.parent.assertEqual(outputs["loss"].size(), ())
+
 
 @require_torch
 class UMT5ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin, unittest.TestCase):
     all_model_classes = (
-        (UMT5Model, UMT5ForConditionalGeneration, UMT5ForQuestionAnswering) if is_torch_available() else ()
+        (UMT5Model, UMT5ForConditionalGeneration, UMT5ForSequenceClassification, UMT5ForQuestionAnswering)
+        if is_torch_available()
+        else ()
     )
     all_generative_model_classes = (UMT5ForConditionalGeneration,) if is_torch_available() else ()
     pipeline_model_mapping = (
         {
             "conversational": UMT5ForConditionalGeneration,
             "feature-extraction": UMT5Model,
+            "question-answering": UMT5ForQuestionAnswering,
             "summarization": UMT5ForConditionalGeneration,
+            "text-classification": UMT5ForSequenceClassification,
             "text2text-generation": UMT5ForConditionalGeneration,
             "translation": UMT5ForConditionalGeneration,
-            "question-answering": UMT5ForQuestionAnswering,
+            "zero-shot": UMT5ForSequenceClassification,
         }
         if is_torch_available()
         else {}
@@ -284,6 +319,170 @@ class UMT5ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
 
     def setUp(self):
         self.model_tester = UMT5ModelTester(self)
+
+    # `QAPipelineTests` is not working well with slow tokenizers (for some models) and we don't want to touch the file
+    # `src/transformers/data/processors/squad.py` (where this test fails for this model)
+    def is_pipeline_test_to_skip(
+        self, pipeline_test_casse_name, config_class, model_architecture, tokenizer_name, processor_name
+    ):
+        if pipeline_test_casse_name == "QAPipelineTests" and not tokenizer_name.endswith("Fast"):
+            return True
+
+        return False
+
+    def _create_and_check_torch_fx_tracing(self, config, inputs_dict, output_loss=False):
+        if not is_torch_fx_available() or not self.fx_compatible:
+            return
+
+        configs_no_init = _config_zero_init(config)  # To be sure we have no Nan
+        configs_no_init.return_dict = False
+
+        for model_class in self.all_model_classes:
+            if model_class.__name__ == "UMT5ForSequenceClassification":
+                continue
+            model = model_class(config=configs_no_init)
+            model.to(torch_device)
+            model.eval()
+            inputs = self._prepare_for_class(inputs_dict, model_class, return_labels=output_loss)
+
+            try:
+                if model.config.is_encoder_decoder:
+                    model.config.use_cache = False  # FSTM still requires this hack -> FSTM should probably be refactored similar to BART afterward
+                    labels = inputs.get("labels", None)
+                    input_names = [
+                        "attention_mask",
+                        "decoder_attention_mask",
+                        "decoder_input_ids",
+                        "input_features",
+                        "input_ids",
+                        "input_values",
+                    ]
+                    if labels is not None:
+                        input_names.append("labels")
+
+                    filtered_inputs = {k: v for (k, v) in inputs.items() if k in input_names}
+                    input_names = list(filtered_inputs.keys())
+
+                    model_output = model(**filtered_inputs)
+
+                    traced_model = symbolic_trace(model, input_names)
+                    traced_output = traced_model(**filtered_inputs)
+                else:
+                    input_names = [
+                        "attention_mask",
+                        "bbox",
+                        "input_features",
+                        "input_ids",
+                        "input_values",
+                        "pixel_values",
+                        "token_type_ids",
+                        "visual_feats",
+                        "visual_pos",
+                    ]
+
+                    labels = inputs.get("labels", None)
+                    start_positions = inputs.get("start_positions", None)
+                    end_positions = inputs.get("end_positions", None)
+                    if labels is not None:
+                        input_names.append("labels")
+                    if start_positions is not None:
+                        input_names.append("start_positions")
+                    if end_positions is not None:
+                        input_names.append("end_positions")
+
+                    filtered_inputs = {k: v for (k, v) in inputs.items() if k in input_names}
+                    input_names = list(filtered_inputs.keys())
+
+                    if model.__class__.__name__ in set(MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values()) and (
+                        not hasattr(model.config, "problem_type") or model.config.problem_type is None
+                    ):
+                        model.config.problem_type = "single_label_classification"
+
+                    traced_model = symbolic_trace(model, input_names)
+                    traced_output = traced_model(**filtered_inputs)
+                    model_output = model(**filtered_inputs)
+
+            except Exception as e:
+                self.fail(f"Couldn't trace module: {e}")
+
+            def flatten_output(output):
+                flatten = []
+                for x in output:
+                    if isinstance(x, (tuple, list)):
+                        flatten += flatten_output(x)
+                    elif not isinstance(x, torch.Tensor):
+                        continue
+                    else:
+                        flatten.append(x)
+                return flatten
+
+            model_output = flatten_output(model_output)
+            traced_output = flatten_output(traced_output)
+            num_outputs = len(model_output)
+
+            for i in range(num_outputs):
+                self.assertTrue(
+                    torch.allclose(model_output[i], traced_output[i]),
+                    f"traced {i}th output doesn't match model {i}th output for {model_class}",
+                )
+
+            # Test that the model can be serialized and restored properly
+            with tempfile.TemporaryDirectory() as tmp_dir_name:
+                pkl_file_name = os.path.join(tmp_dir_name, "model.pkl")
+                try:
+                    with open(pkl_file_name, "wb") as f:
+                        pickle.dump(traced_model, f)
+                    with open(pkl_file_name, "rb") as f:
+                        loaded = pickle.load(f)
+                except Exception as e:
+                    self.fail(f"Couldn't serialize / deserialize the traced model: {e}")
+
+                loaded_output = loaded(**filtered_inputs)
+                loaded_output = flatten_output(loaded_output)
+
+                for i in range(num_outputs):
+                    self.assertTrue(
+                        torch.allclose(model_output[i], loaded_output[i]),
+                        f"serialized model {i}th output doesn't match model {i}th output for {model_class}",
+                    )
+
+            # Avoid memory leak. Without this, each call increase RAM usage by ~20MB.
+            # (Even with this call, there are still memory leak by ~0.04MB)
+            self.clear_torch_jit_class_registry()
+
+    # UMT5ForSequenceClassification does not support inputs_embeds
+    def test_inputs_embeds(self):
+        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+
+        for model_class in (UMT5Model, UMT5ForConditionalGeneration, UMT5ForQuestionAnswering):
+            model = model_class(config)
+            model.to(torch_device)
+            model.eval()
+
+            inputs = copy.deepcopy(self._prepare_for_class(inputs_dict, model_class))
+
+            if not self.is_encoder_decoder:
+                input_ids = inputs["input_ids"]
+                del inputs["input_ids"]
+            else:
+                encoder_input_ids = inputs["input_ids"]
+                decoder_input_ids = inputs.get("decoder_input_ids", encoder_input_ids)
+                del inputs["input_ids"]
+                inputs.pop("decoder_input_ids", None)
+
+            wte = model.get_input_embeddings()
+            if not self.is_encoder_decoder:
+                inputs["inputs_embeds"] = wte(input_ids)
+            else:
+                inputs["inputs_embeds"] = wte(encoder_input_ids)
+                inputs["decoder_inputs_embeds"] = wte(decoder_input_ids)
+
+            with torch.no_grad():
+                model(**inputs)[0]
+
+    def test_with_sequence_classification_head(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_with_sequence_classification_head(*config_and_inputs)
 
     @unittest.skip("Test has a segmentation fault on torch 1.8.0")
     def test_export_to_onnx(self):
@@ -341,6 +540,194 @@ class UMT5ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
     def test_disk_offload(self):
         pass
 
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing(self):
+        pass
+
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing_use_reentrant(self):
+        pass
+
+    @unittest.skip(
+        reason="This architecure seem to not compute gradients properly when using GC, check: https://github.com/huggingface/transformers/pull/27124"
+    )
+    def test_training_gradient_checkpointing_use_reentrant_false(self):
+        pass
+
+
+# Copied from tests.models.t5.test_modeling_t5.T5EncoderOnlyModelTester with T5->UMT5
+class UMT5EncoderOnlyModelTester:
+    def __init__(
+        self,
+        parent,
+        vocab_size=99,
+        batch_size=13,
+        encoder_seq_length=7,
+        # For common tests
+        use_attention_mask=True,
+        hidden_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        d_ff=37,
+        relative_attention_num_buckets=8,
+        is_training=False,
+        dropout_rate=0.1,
+        initializer_factor=0.002,
+        is_encoder_decoder=False,
+        eos_token_id=1,
+        pad_token_id=0,
+        scope=None,
+    ):
+        self.parent = parent
+        self.batch_size = batch_size
+        self.encoder_seq_length = encoder_seq_length
+        # For common tests
+        self.seq_length = self.encoder_seq_length
+        self.use_attention_mask = use_attention_mask
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.d_ff = d_ff
+        self.relative_attention_num_buckets = relative_attention_num_buckets
+        self.dropout_rate = dropout_rate
+        self.initializer_factor = initializer_factor
+        self.eos_token_id = eos_token_id
+        self.pad_token_id = pad_token_id
+        self.is_encoder_decoder = is_encoder_decoder
+        self.scope = None
+        self.is_training = is_training
+
+    def get_large_model_config(self):
+        return UMT5Config.from_pretrained("google-t5/t5-base")
+
+    def prepare_config_and_inputs(self):
+        input_ids = ids_tensor([self.batch_size, self.encoder_seq_length], self.vocab_size)
+
+        attention_mask = None
+        if self.use_attention_mask:
+            attention_mask = ids_tensor([self.batch_size, self.encoder_seq_length], vocab_size=2)
+
+        config = UMT5Config(
+            vocab_size=self.vocab_size,
+            d_model=self.hidden_size,
+            d_ff=self.d_ff,
+            d_kv=self.hidden_size // self.num_attention_heads,
+            num_layers=self.num_hidden_layers,
+            num_heads=self.num_attention_heads,
+            relative_attention_num_buckets=self.relative_attention_num_buckets,
+            dropout_rate=self.dropout_rate,
+            initializer_factor=self.initializer_factor,
+            eos_token_id=self.eos_token_id,
+            bos_token_id=self.pad_token_id,
+            pad_token_id=self.pad_token_id,
+            is_encoder_decoder=self.is_encoder_decoder,
+        )
+
+        return (
+            config,
+            input_ids,
+            attention_mask,
+        )
+
+    def create_and_check_model(
+        self,
+        config,
+        input_ids,
+        attention_mask,
+    ):
+        model = UMT5EncoderModel(config=config)
+        model.to(torch_device)
+        model.eval()
+        result = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+        )
+        result = model(input_ids=input_ids)
+        encoder_output = result.last_hidden_state
+
+        self.parent.assertEqual(encoder_output.size(), (self.batch_size, self.encoder_seq_length, self.hidden_size))
+
+    def create_and_check_model_fp16_forward(
+        self,
+        config,
+        input_ids,
+        attention_mask,
+    ):
+        model = UMT5EncoderModel(config=config).to(torch_device).half().eval()
+        output = model(input_ids, attention_mask=attention_mask)["last_hidden_state"]
+        self.parent.assertFalse(torch.isnan(output).any().item())
+
+    def create_and_check_with_token_classification_head(
+        self,
+        config,
+        input_ids,
+        attention_mask,
+    ):
+        labels = torch.tensor([1] * self.seq_length * self.batch_size, dtype=torch.long, device=torch_device)
+        model = UMT5ForTokenClassification(config=config).to(torch_device).eval()
+        outputs = model(
+            input_ids=input_ids,
+            labels=labels,
+            attention_mask=attention_mask,
+        )
+        self.parent.assertEqual(outputs["logits"].size(), (self.batch_size, self.seq_length, config.num_labels))
+        self.parent.assertEqual(outputs["loss"].size(), ())
+
+    def prepare_config_and_inputs_for_common(self):
+        config_and_inputs = self.prepare_config_and_inputs()
+        (
+            config,
+            input_ids,
+            attention_mask,
+        ) = config_and_inputs
+
+        inputs_dict = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+        return config, inputs_dict
+
+
+# Copied from tests.models.t5.test_modeling_t5.T5EncoderOnlyModelTest with T5->UMT5
+class UMT5EncoderOnlyModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
+    all_model_classes = (UMT5EncoderModel, UMT5ForTokenClassification) if is_torch_available() else ()
+    test_pruning = False
+    test_resize_embeddings = False
+    test_model_parallel = True
+    pipeline_model_mapping = (
+        {
+            "token-classification": UMT5ForTokenClassification,
+        }
+        if is_torch_available()
+        else {}
+    )
+    all_parallelizable_model_classes = (UMT5EncoderModel,) if is_torch_available() else ()
+
+    def setUp(self):
+        self.model_tester = UMT5EncoderOnlyModelTester(self)
+        self.config_tester = ConfigTester(self, config_class=UMT5Config, d_model=37)
+
+    def test_config(self):
+        self.config_tester.run_common_tests()
+
+    def test_model(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_model(*config_and_inputs)
+
+    @unittest.skipIf(torch_device == "cpu", "Cant do half precision")
+    def test_model_fp16_forward(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_model_fp16_forward(*config_and_inputs)
+
+    def test_with_token_classification_head(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_with_token_classification_head(*config_and_inputs)
+
 
 @require_torch
 @require_sentencepiece
@@ -376,7 +763,7 @@ class Umt5IntegrationTest(unittest.TestCase):
             ]
         )
         # fmt: on
-        torch.testing.assert_allclose(input_ids, EXPECTED_IDS)
+        torch.testing.assert_close(input_ids, EXPECTED_IDS)
 
         generated_ids = model.generate(input_ids.to(torch_device))
         EXPECTED_FILLING = [

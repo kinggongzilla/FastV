@@ -14,7 +14,6 @@
 # limitations under the License.
 """ BLIP-2 model configuration"""
 
-import copy
 import os
 from typing import Union
 
@@ -26,9 +25,8 @@ from ..auto import CONFIG_MAPPING
 
 logger = logging.get_logger(__name__)
 
-BLIP_2_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "salesforce/blip2-opt-2.7b": "https://huggingface.co/salesforce/blip2-opt-2.7b/resolve/main/config.json",
-}
+
+from ..deprecated._archive_maps import BLIP_2_PRETRAINED_CONFIG_ARCHIVE_MAP  # noqa: F401, E402
 
 
 class Blip2VisionConfig(PretrainedConfig):
@@ -91,7 +89,7 @@ class Blip2VisionConfig(PretrainedConfig):
         image_size=224,
         patch_size=14,
         hidden_act="gelu",
-        layer_norm_eps=0.00001,
+        layer_norm_eps=1e-6,
         attention_dropout=0.0,
         initializer_range=1e-10,
         qkv_bias=True,
@@ -191,6 +189,7 @@ class Blip2QFormerConfig(PretrainedConfig):
     >>> # Accessing the model configuration
     >>> configuration = model.config
     ```"""
+
     model_type = "blip_2_qformer"
 
     def __init__(
@@ -302,7 +301,6 @@ class Blip2Config(PretrainedConfig):
     ```"""
 
     model_type = "blip-2"
-    is_composition = True
 
     def __init__(self, vision_config=None, qformer_config=None, text_config=None, num_query_tokens=32, **kwargs):
         super().__init__(**kwargs)
@@ -355,17 +353,3 @@ class Blip2Config(PretrainedConfig):
             text_config=text_config.to_dict(),
             **kwargs,
         )
-
-    def to_dict(self):
-        """
-        Serializes this instance to a Python dictionary. Override the default [`~PretrainedConfig.to_dict`].
-
-        Returns:
-            `Dict[str, any]`: Dictionary of all the attributes that make up this configuration instance,
-        """
-        output = copy.deepcopy(self.__dict__)
-        output["vision_config"] = self.vision_config.to_dict()
-        output["qformer_config"] = self.qformer_config.to_dict()
-        output["text_config"] = self.text_config.to_dict()
-        output["model_type"] = self.__class__.model_type
-        return output

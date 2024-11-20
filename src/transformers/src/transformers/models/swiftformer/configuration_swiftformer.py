@@ -26,9 +26,8 @@ from ...utils import logging
 
 logger = logging.get_logger(__name__)
 
-SWIFTFORMER_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "MBZUAI/swiftformer-xs": "https://huggingface.co/MBZUAI/swiftformer-xs/resolve/main/config.json",
-}
+
+from ..deprecated._archive_maps import SWIFTFORMER_PRETRAINED_CONFIG_ARCHIVE_MAP  # noqa: F401, E402
 
 
 class SwiftFormerConfig(PretrainedConfig):
@@ -51,7 +50,7 @@ class SwiftFormerConfig(PretrainedConfig):
             The embedding dimension at each stage
         mlp_ratio (`int`, *optional*, defaults to 4):
             Ratio of size of the hidden dimensionality of an MLP to the dimensionality of its input.
-        downsamples (`List[bool]`, *optional*, defaults to `[True, True, True, True]`)
+        downsamples (`List[bool]`, *optional*, defaults to `[True, True, True, True]`):
             Whether or not to downsample inputs between two stages.
         hidden_act (`str`, *optional*, defaults to `"gelu"`):
             The non-linear activation function (string). `"gelu"`, `"relu"`, `"selu"` and `"gelu_new"` are supported.
@@ -61,13 +60,13 @@ class SwiftFormerConfig(PretrainedConfig):
             The stride of convolution kernels in downsampling layers.
         down_pad (`int`, *optional*, defaults to 1):
             Padding in downsampling layers.
-        drop_path_rate (`float`, *optional*, defaults to 0.):
+        drop_path_rate (`float`, *optional*, defaults to 0.0):
             Rate at which to increase dropout probability in DropPath.
         use_layer_scale (`bool`, *optional*, defaults to `True`):
             Whether to scale outputs from token mixers.
-        layer_scale_init_value (`float`, *optional*, defaults to 1e-5):
+        layer_scale_init_value (`float`, *optional*, defaults to 1e-05):
             Factor by which outputs from token mixers are scaled.
-        batch_norm_eps (`float`, *optional*, defaults to 1e-5):
+        batch_norm_eps (`float`, *optional*, defaults to 1e-05):
             The epsilon used by the batch normalization layers.
 
 
@@ -85,6 +84,7 @@ class SwiftFormerConfig(PretrainedConfig):
     >>> # Accessing the model configuration
     >>> configuration = model.config
     ```"""
+
     model_type = "swiftformer"
 
     def __init__(

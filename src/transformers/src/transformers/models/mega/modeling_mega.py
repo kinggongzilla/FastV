@@ -50,10 +50,8 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "mnaylor/mega-base-wikitext"
 _CONFIG_FOR_DOC = "MegaConfig"
 
-MEGA_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "mnaylor/mega-base-wikitext",
-    # See all Mega models at https://huggingface.co/models?filter=mega
-]
+
+from ..deprecated._archive_maps import MEGA_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 class MegaEmbeddings(nn.Module):
@@ -169,7 +167,7 @@ class MegaRotaryRelativePositionalBias(nn.Module):
     def get_sinusoid_embeddings(max_positions: int, embedding_dim: int):
         half_dim = embedding_dim // 2
         emb = math.log(10000) / half_dim
-        emb = torch.exp(torch.arange(half_dim, dtype=torch.float) * -emb)
+        emb = torch.exp(torch.arange(half_dim, dtype=torch.int64).float() * -emb)
         emb = torch.arange(max_positions, dtype=torch.float).unsqueeze(1) * emb.unsqueeze(0)
         return torch.sin(emb), torch.cos(emb)
 
@@ -539,9 +537,7 @@ class MegaGatedCrossAttention(nn.Module):
         self.config = config
         self.activation = ACT2FN[self.config.activation]
         self.attention_activation = self.config.attention_activation
-        self.scaling = (
-            self.config.shared_representation_size**-0.5 if self.attention_activation == "softmax" else None
-        )
+        self.scaling = self.config.shared_representation_size**-0.5 if self.attention_activation == "softmax" else None
 
         self.dropout = MegaDropout(self.config.dropout_prob, is_featurewise=self.config.use_feature_dropout)
         self.hidden_dropout = MegaDropout(
@@ -1341,7 +1337,7 @@ class MegaPreTrainedModel(PreTrainedModel):
     config_class = MegaConfig
     base_model_prefix = "mega"
     supports_gradient_checkpointing = False
-    _no_split_modules = []
+    _no_split_modules = ["MegaMovingAverageGatedAttention"]
 
     def _init_weights(self, module):
         """Initialize the weights"""
@@ -1533,6 +1529,7 @@ class MegaModel(MegaPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
             device = input_ids.device
         elif inputs_embeds is not None:
@@ -1540,6 +1537,9 @@ class MegaModel(MegaPreTrainedModel):
             device = inputs_embeds.device
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        if self.config.use_chunking:
+            input_shape = torch.tensor([input_shape[0], self.config.chunk_size])
 
         batch_size, sequence_length = input_shape
 
@@ -1798,7 +1798,9 @@ class MegaForCausalLM(MegaPreTrainedModel):
     def _reorder_cache(self, past_key_values, beam_idx):
         reordered_past = ()
         for layer_past in past_key_values:
-            reordered_past += (tuple(past_state.index_select(0, beam_idx) for past_state in layer_past),)
+            reordered_past += (
+                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
+            )
         return reordered_past
 
 

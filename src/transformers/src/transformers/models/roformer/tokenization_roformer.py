@@ -27,44 +27,6 @@ logger = logging.get_logger(__name__)
 
 VOCAB_FILES_NAMES = {"vocab_file": "vocab.txt"}
 
-PRETRAINED_VOCAB_FILES_MAP = {
-    "vocab_file": {
-        "junnyu/roformer_chinese_small": "https://huggingface.co/junnyu/roformer_chinese_small/resolve/main/vocab.txt",
-        "junnyu/roformer_chinese_base": "https://huggingface.co/junnyu/roformer_chinese_base/resolve/main/vocab.txt",
-        "junnyu/roformer_chinese_char_small": (
-            "https://huggingface.co/junnyu/roformer_chinese_char_small/resolve/main/vocab.txt"
-        ),
-        "junnyu/roformer_chinese_char_base": (
-            "https://huggingface.co/junnyu/roformer_chinese_char_base/resolve/main/vocab.txt"
-        ),
-        "junnyu/roformer_small_discriminator": (
-            "https://huggingface.co/junnyu/roformer_small_discriminator/resolve/main/vocab.txt"
-        ),
-        "junnyu/roformer_small_generator": (
-            "https://huggingface.co/junnyu/roformer_small_generator/resolve/main/vocab.txt"
-        ),
-    }
-}
-
-PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {
-    "junnyu/roformer_chinese_small": 1536,
-    "junnyu/roformer_chinese_base": 1536,
-    "junnyu/roformer_chinese_char_small": 512,
-    "junnyu/roformer_chinese_char_base": 512,
-    "junnyu/roformer_small_discriminator": 128,
-    "junnyu/roformer_small_generator": 128,
-}
-
-
-PRETRAINED_INIT_CONFIGURATION = {
-    "junnyu/roformer_chinese_small": {"do_lower_case": True},
-    "junnyu/roformer_chinese_base": {"do_lower_case": True},
-    "junnyu/roformer_chinese_char_small": {"do_lower_case": True},
-    "junnyu/roformer_chinese_char_base": {"do_lower_case": True},
-    "junnyu/roformer_small_discriminator": {"do_lower_case": True},
-    "junnyu/roformer_small_generator": {"do_lower_case": True},
-}
-
 
 # Copied from transformers.models.bert.tokenization_bert.load_vocab
 def load_vocab(vocab_file):
@@ -358,10 +320,8 @@ class RoFormerTokenizer(PreTrainedTokenizer):
     >>> tokenizer.tokenize("今天天气非常好。")
     ['今', '天', '天', '气', '非常', '好', '。']
     ```"""
+
     vocab_files_names = VOCAB_FILES_NAMES
-    pretrained_vocab_files_map = PRETRAINED_VOCAB_FILES_MAP
-    max_model_input_sizes = PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES
-    pretrained_init_configuration = PRETRAINED_INIT_CONFIGURATION
 
     def __init__(
         self,
@@ -378,20 +338,6 @@ class RoFormerTokenizer(PreTrainedTokenizer):
         strip_accents=None,
         **kwargs,
     ):
-        super().__init__(
-            do_lower_case=do_lower_case,
-            do_basic_tokenize=do_basic_tokenize,
-            never_split=never_split,
-            unk_token=unk_token,
-            sep_token=sep_token,
-            pad_token=pad_token,
-            cls_token=cls_token,
-            mask_token=mask_token,
-            tokenize_chinese_chars=tokenize_chinese_chars,
-            strip_accents=strip_accents,
-            **kwargs,
-        )
-
         if not os.path.isfile(vocab_file):
             raise ValueError(
                 f"Can't find a vocabulary file at path '{vocab_file}'. To load the vocabulary from a Google pretrained"
@@ -407,7 +353,7 @@ class RoFormerTokenizer(PreTrainedTokenizer):
                 tokenize_chinese_chars=tokenize_chinese_chars,
                 strip_accents=strip_accents,
             )
-        self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab, unk_token=self.unk_token)
+        self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab, unk_token=str(unk_token))
         try:
             import rjieba
         except ImportError:
@@ -416,6 +362,20 @@ class RoFormerTokenizer(PreTrainedTokenizer):
                 "See https://pypi.org/project/rjieba/ for installation."
             )
         self.jieba = rjieba
+
+        super().__init__(
+            do_lower_case=do_lower_case,
+            do_basic_tokenize=do_basic_tokenize,
+            never_split=never_split,
+            unk_token=unk_token,
+            sep_token=sep_token,
+            pad_token=pad_token,
+            cls_token=cls_token,
+            mask_token=mask_token,
+            tokenize_chinese_chars=tokenize_chinese_chars,
+            strip_accents=strip_accents,
+            **kwargs,
+        )
 
     @property
     def do_lower_case(self):

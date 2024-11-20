@@ -20,6 +20,7 @@ from transformers.testing_utils import (
     require_sentencepiece,
     require_tokenizers,
     require_torch,
+    require_torch_fp16,
     require_torch_multi_gpu,
     slow,
     torch_device,
@@ -36,7 +37,6 @@ if is_torch_available():
     from torch import nn
 
     from transformers import (
-        REFORMER_PRETRAINED_MODEL_ARCHIVE_LIST,
         ReformerForMaskedLM,
         ReformerForQuestionAnswering,
         ReformerForSequenceClassification,
@@ -563,12 +563,12 @@ class ReformerTesterMixin:
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_reformer_random_seed(*config_and_inputs)
 
-    @unittest.skipIf(torch_device == "cpu", "Cant do half precision")
+    @require_torch_fp16
     def test_reformer_model_fp16_forward(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_reformer_model_fp16_forward(*config_and_inputs)
 
-    @unittest.skipIf(torch_device == "cpu", "Cant do half precision")
+    @require_torch_fp16
     def test_reformer_model_fp16_generate(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_reformer_model_fp16_generate(*config_and_inputs)
@@ -615,9 +615,9 @@ class ReformerLocalAttnModelTest(ReformerTesterMixin, GenerationTesterMixin, Mod
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in REFORMER_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = ReformerModelWithLMHead.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "google/reformer-crime-and-punishment"
+        model = ReformerModelWithLMHead.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     def _check_attentions_for_generate(
         self, batch_size, attentions, min_length, max_length, config, use_cache=False, num_beam_groups=1

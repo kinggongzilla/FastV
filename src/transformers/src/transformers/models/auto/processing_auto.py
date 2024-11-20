@@ -17,6 +17,7 @@ import importlib
 import inspect
 import json
 import os
+import warnings
 from collections import OrderedDict
 
 # Build the list of all feature extractors
@@ -24,8 +25,9 @@ from ...configuration_utils import PretrainedConfig
 from ...dynamic_module_utils import get_class_from_dynamic_module, resolve_trust_remote_code
 from ...feature_extraction_utils import FeatureExtractionMixin
 from ...image_processing_utils import ImageProcessingMixin
+from ...processing_utils import ProcessorMixin
 from ...tokenization_utils import TOKENIZER_CONFIG_FILE
-from ...utils import FEATURE_EXTRACTOR_NAME, get_file_from_repo, logging
+from ...utils import FEATURE_EXTRACTOR_NAME, PROCESSOR_NAME, get_file_from_repo, logging
 from .auto_factory import _LazyAutoMapping
 from .configuration_auto import (
     CONFIG_MAPPING_NAMES,
@@ -52,32 +54,46 @@ PROCESSOR_MAPPING_NAMES = OrderedDict(
         ("clap", "ClapProcessor"),
         ("clip", "CLIPProcessor"),
         ("clipseg", "CLIPSegProcessor"),
+        ("clvp", "ClvpProcessor"),
         ("flava", "FlavaProcessor"),
+        ("fuyu", "FuyuProcessor"),
         ("git", "GitProcessor"),
         ("groupvit", "CLIPProcessor"),
         ("hubert", "Wav2Vec2Processor"),
+        ("idefics", "IdeficsProcessor"),
+        ("idefics2", "Idefics2Processor"),
         ("instructblip", "InstructBlipProcessor"),
+        ("kosmos-2", "Kosmos2Processor"),
         ("layoutlmv2", "LayoutLMv2Processor"),
         ("layoutlmv3", "LayoutLMv3Processor"),
+        ("llava", "LlavaProcessor"),
+        ("llava_next", "LlavaNextProcessor"),
         ("markuplm", "MarkupLMProcessor"),
         ("mctct", "MCTCTProcessor"),
         ("mgp-str", "MgpstrProcessor"),
         ("oneformer", "OneFormerProcessor"),
+        ("owlv2", "Owlv2Processor"),
         ("owlvit", "OwlViTProcessor"),
         ("pix2struct", "Pix2StructProcessor"),
+        ("pop2piano", "Pop2PianoProcessor"),
         ("sam", "SamProcessor"),
+        ("seamless_m4t", "SeamlessM4TProcessor"),
         ("sew", "Wav2Vec2Processor"),
         ("sew-d", "Wav2Vec2Processor"),
+        ("siglip", "SiglipProcessor"),
         ("speech_to_text", "Speech2TextProcessor"),
         ("speech_to_text_2", "Speech2Text2Processor"),
         ("speecht5", "SpeechT5Processor"),
         ("trocr", "TrOCRProcessor"),
         ("tvlt", "TvltProcessor"),
+        ("tvp", "TvpProcessor"),
         ("unispeech", "Wav2Vec2Processor"),
         ("unispeech-sat", "Wav2Vec2Processor"),
         ("vilt", "ViltProcessor"),
+        ("vipllava", "LlavaProcessor"),
         ("vision-text-dual-encoder", "VisionTextDualEncoderProcessor"),
         ("wav2vec2", "Wav2Vec2Processor"),
+        ("wav2vec2-bert", "Wav2Vec2Processor"),
         ("wav2vec2-conformer", "Wav2Vec2Processor"),
         ("wavlm", "Wav2Vec2Processor"),
         ("whisper", "WhisperProcessor"),
@@ -142,8 +158,7 @@ class AutoProcessor:
                 This can be either:
 
                 - a string, the *model id* of a pretrained feature_extractor hosted inside a model repo on
-                  huggingface.co. Valid model ids can be located at the root-level, like `bert-base-uncased`, or
-                  namespaced under a user or organization name, like `dbmdz/bert-base-german-cased`.
+                  huggingface.co.
                 - a path to a *directory* containing a processor files saved using the `save_pretrained()` method,
                   e.g., `./my_model_directory/`.
             cache_dir (`str` or `os.PathLike`, *optional*):
@@ -158,7 +173,7 @@ class AutoProcessor:
             proxies (`Dict[str, str]`, *optional*):
                 A dictionary of proxy servers to use by protocol or endpoint, e.g., `{'http': 'foo.bar:3128',
                 'http://hostname': 'foo.bar:4012'}.` The proxies are used on each request.
-            use_auth_token (`str` or *bool*, *optional*):
+            token (`str` or *bool*, *optional*):
                 The token to use as HTTP bearer authorization for remote files. If `True`, will use the token generated
                 when running `huggingface-cli login` (stored in `~/.huggingface`).
             revision (`str`, *optional*, defaults to `"main"`):
@@ -181,7 +196,7 @@ class AutoProcessor:
 
         <Tip>
 
-        Passing `use_auth_token=True` is required when you want to use a private model.
+        Passing `token=True` is required when you want to use a private model.
 
         </Tip>
 
@@ -196,6 +211,18 @@ class AutoProcessor:
         >>> # If processor files are in a directory (e.g. processor was saved using *save_pretrained('./test/saved_model/')*)
         >>> # processor = AutoProcessor.from_pretrained("./test/saved_model/")
         ```"""
+        use_auth_token = kwargs.pop("use_auth_token", None)
+        if use_auth_token is not None:
+            warnings.warn(
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+                FutureWarning,
+            )
+            if kwargs.get("token", None) is not None:
+                raise ValueError(
+                    "`token` and `use_auth_token` are both specified. Please set only the argument `token`."
+                )
+            kwargs["token"] = use_auth_token
+
         config = kwargs.pop("config", None)
         trust_remote_code = kwargs.pop("trust_remote_code", None)
         kwargs["_from_auto"] = True
@@ -203,27 +230,41 @@ class AutoProcessor:
         processor_class = None
         processor_auto_map = None
 
-        # First, let's see if we have a preprocessor config.
+        # First, let's see if we have a processor or preprocessor config.
         # Filter the kwargs for `get_file_from_repo`.
         get_file_from_repo_kwargs = {
             key: kwargs[key] for key in inspect.signature(get_file_from_repo).parameters.keys() if key in kwargs
         }
-        # Let's start by checking whether the processor class is saved in an image processor
-        preprocessor_config_file = get_file_from_repo(
-            pretrained_model_name_or_path, FEATURE_EXTRACTOR_NAME, **get_file_from_repo_kwargs
+
+        # Let's start by checking whether the processor class is saved in a processor config
+        processor_config_file = get_file_from_repo(
+            pretrained_model_name_or_path, PROCESSOR_NAME, **get_file_from_repo_kwargs
         )
-        if preprocessor_config_file is not None:
-            config_dict, _ = ImageProcessingMixin.get_image_processor_dict(pretrained_model_name_or_path, **kwargs)
+        if processor_config_file is not None:
+            config_dict, _ = ProcessorMixin.get_processor_dict(pretrained_model_name_or_path, **kwargs)
             processor_class = config_dict.get("processor_class", None)
             if "AutoProcessor" in config_dict.get("auto_map", {}):
                 processor_auto_map = config_dict["auto_map"]["AutoProcessor"]
 
-        # If not found, let's check whether the processor class is saved in a feature extractor config
-        if preprocessor_config_file is not None and processor_class is None:
-            config_dict, _ = FeatureExtractionMixin.get_feature_extractor_dict(pretrained_model_name_or_path, **kwargs)
-            processor_class = config_dict.get("processor_class", None)
-            if "AutoProcessor" in config_dict.get("auto_map", {}):
-                processor_auto_map = config_dict["auto_map"]["AutoProcessor"]
+        if processor_class is None:
+            # If not found, let's check whether the processor class is saved in an image processor config
+            preprocessor_config_file = get_file_from_repo(
+                pretrained_model_name_or_path, FEATURE_EXTRACTOR_NAME, **get_file_from_repo_kwargs
+            )
+            if preprocessor_config_file is not None:
+                config_dict, _ = ImageProcessingMixin.get_image_processor_dict(pretrained_model_name_or_path, **kwargs)
+                processor_class = config_dict.get("processor_class", None)
+                if "AutoProcessor" in config_dict.get("auto_map", {}):
+                    processor_auto_map = config_dict["auto_map"]["AutoProcessor"]
+
+            # If not found, let's check whether the processor class is saved in a feature extractor config
+            if preprocessor_config_file is not None and processor_class is None:
+                config_dict, _ = FeatureExtractionMixin.get_feature_extractor_dict(
+                    pretrained_model_name_or_path, **kwargs
+                )
+                processor_class = config_dict.get("processor_class", None)
+                if "AutoProcessor" in config_dict.get("auto_map", {}):
+                    processor_auto_map = config_dict["auto_map"]["AutoProcessor"]
 
         if processor_class is None:
             # Next, let's check whether the processor class is saved in a tokenizer
@@ -300,12 +341,12 @@ class AutoProcessor:
 
         raise ValueError(
             f"Unrecognized processing class in {pretrained_model_name_or_path}. Can't instantiate a processor, a "
-            "tokenizer, an image processor or a feature extractor for this model. Make sure the repository contains"
+            "tokenizer, an image processor or a feature extractor for this model. Make sure the repository contains "
             "the files of at least one of those processing classes."
         )
 
     @staticmethod
-    def register(config_class, processor_class):
+    def register(config_class, processor_class, exist_ok=False):
         """
         Register a new processor for this class.
 
@@ -314,4 +355,4 @@ class AutoProcessor:
                 The configuration corresponding to the model to register.
             processor_class ([`FeatureExtractorMixin`]): The processor to register.
         """
-        PROCESSOR_MAPPING.register(config_class, processor_class)
+        PROCESSOR_MAPPING.register(config_class, processor_class, exist_ok=exist_ok)

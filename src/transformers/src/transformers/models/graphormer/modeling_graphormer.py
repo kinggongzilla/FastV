@@ -37,11 +37,7 @@ _CHECKPOINT_FOR_DOC = "graphormer-base-pcqm4mv1"
 _CONFIG_FOR_DOC = "GraphormerConfig"
 
 
-GRAPHORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "clefourrier/graphormer-base-pcqm4mv1",
-    "clefourrier/graphormer-base-pcqm4mv2",
-    # See all Graphormer models at https://huggingface.co/models?filter=graphormer
-]
+from ..deprecated._archive_maps import GRAPHORMER_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 def quant_noise(module: nn.Module, p: float, block_size: int):
@@ -311,7 +307,7 @@ class GraphormerMultiheadAttention(nn.Module):
         self.qkv_same_dim = self.kdim == config.embedding_dim and self.vdim == config.embedding_dim
 
         self.num_heads = config.num_attention_heads
-        self.dropout_module = torch.nn.Dropout(p=config.dropout, inplace=False)
+        self.attention_dropout_module = torch.nn.Dropout(p=config.attention_dropout, inplace=False)
 
         self.head_dim = config.embedding_dim // config.num_attention_heads
         if not (self.head_dim * config.num_attention_heads == self.embedding_dim):
@@ -463,7 +459,7 @@ class GraphormerMultiheadAttention(nn.Module):
 
         attn_weights_float = torch.nn.functional.softmax(attn_weights, dim=-1)
         attn_weights = attn_weights_float.type_as(attn_weights)
-        attn_probs = self.dropout_module(attn_weights)
+        attn_probs = self.attention_dropout_module(attn_weights)
 
         if v is None:
             raise AssertionError("No value generated")
@@ -494,14 +490,13 @@ class GraphormerGraphEncoderLayer(nn.Module):
         # Initialize parameters
         self.embedding_dim = config.embedding_dim
         self.num_attention_heads = config.num_attention_heads
-        self.attention_dropout = config.attention_dropout
         self.q_noise = config.q_noise
         self.qn_block_size = config.qn_block_size
         self.pre_layernorm = config.pre_layernorm
 
         self.dropout_module = torch.nn.Dropout(p=config.dropout, inplace=False)
 
-        self.activation_dropout_module = torch.nn.Dropout(p=config.dropout, inplace=False)
+        self.activation_dropout_module = torch.nn.Dropout(p=config.activation_dropout, inplace=False)
 
         # Initialize blocks
         self.activation_fn = ACT2FN[config.activation_fn]
@@ -713,7 +708,6 @@ class GraphormerPreTrainedModel(PreTrainedModel):
 
     config_class = GraphormerConfig
     base_model_prefix = "graphormer"
-    supports_gradient_checkpointing = True
     main_input_name_nodes = "input_nodes"
     main_input_name_edges = "input_edges"
 
@@ -773,10 +767,6 @@ class GraphormerPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, GraphormerModel):
-            module.gradient_checkpointing = value
-
 
 class GraphormerModel(GraphormerPreTrainedModel):
     """The Graphormer model is a graph-encoder model.
@@ -816,8 +806,8 @@ class GraphormerModel(GraphormerPreTrainedModel):
         out_degree: torch.LongTensor,
         spatial_pos: torch.LongTensor,
         attn_edge_type: torch.LongTensor,
-        perturb=None,
-        masked_tokens=None,
+        perturb: Optional[torch.FloatTensor] = None,
+        masked_tokens: None = None,
         return_dict: Optional[bool] = None,
         **unused,
     ) -> Union[Tuple[torch.LongTensor], BaseModelOutputWithNoAttention]:

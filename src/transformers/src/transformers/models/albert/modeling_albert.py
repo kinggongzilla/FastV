@@ -48,21 +48,11 @@ from .configuration_albert import AlbertConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "albert-base-v2"
+_CHECKPOINT_FOR_DOC = "albert/albert-base-v2"
 _CONFIG_FOR_DOC = "AlbertConfig"
 
 
-ALBERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "albert-base-v1",
-    "albert-large-v1",
-    "albert-xlarge-v1",
-    "albert-xxlarge-v1",
-    "albert-base-v2",
-    "albert-large-v2",
-    "albert-xlarge-v2",
-    "albert-xxlarge-v2",
-    # See all ALBERT models at https://huggingface.co/models?filter=albert
-]
+from ..deprecated._archive_maps import ALBERT_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
@@ -182,7 +172,7 @@ def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
         try:
             if pointer.shape != array.shape:
                 raise ValueError(f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched")
-        except AssertionError as e:
+        except ValueError as e:
             e.args += (pointer.shape, array.shape)
             raise
         print(f"Initialize PyTorch weight {name} from {original_name}")
@@ -701,6 +691,7 @@ class AlbertModel(AlbertPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
@@ -815,8 +806,8 @@ class AlbertForPreTraining(AlbertPreTrainedModel):
         >>> from transformers import AutoTokenizer, AlbertForPreTraining
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("albert-base-v2")
-        >>> model = AlbertForPreTraining.from_pretrained("albert-base-v2")
+        >>> tokenizer = AutoTokenizer.from_pretrained("albert/albert-base-v2")
+        >>> model = AlbertForPreTraining.from_pretrained("albert/albert-base-v2")
 
         >>> input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute", add_special_tokens=True)).unsqueeze(0)
         >>> # Batch size 1
@@ -957,8 +948,8 @@ class AlbertForMaskedLM(AlbertPreTrainedModel):
         >>> import torch
         >>> from transformers import AutoTokenizer, AlbertForMaskedLM
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("albert-base-v2")
-        >>> model = AlbertForMaskedLM.from_pretrained("albert-base-v2")
+        >>> tokenizer = AutoTokenizer.from_pretrained("albert/albert-base-v2")
+        >>> model = AlbertForMaskedLM.from_pretrained("albert/albert-base-v2")
 
         >>> # add mask_token
         >>> inputs = tokenizer("The capital of [MASK] is Paris.", return_tensors="pt")

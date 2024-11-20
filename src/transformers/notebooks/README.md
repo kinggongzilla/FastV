@@ -19,7 +19,7 @@ limitations under the License.
 You can find here a list of the official notebooks provided by Hugging Face.
 
 Also, we would like to list here interesting content created by the community.
-If you wrote some notebook(s) leveraging 🤗 Transformers and would like be listed here, please open a
+If you wrote some notebook(s) leveraging 🤗 Transformers and would like to be listed here, please open a
 Pull Request so it can be included under the Community notebooks.
 
 
@@ -100,7 +100,7 @@ You can open any page of the documentation as a notebook in Colab (there is a bu
 
 | Notebook     |      Description      |   |   |
 |:----------|:-------------|:-------------|------:|
-| [How to export model to ONNX](https://github.com/huggingface/notebooks/blob/main/examples/onnx-export.ipynb)| Highlight how to export and run inference workloads through ONNX |
+| [How to export model to ONNX](https://github.com/huggingface/notebooks/blob/main/examples/onnx-export.ipynb)| Highlight how to export and run inference workloads through ONNX | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/onnx-export.ipynb)| [![Open in AWS Studio](https://studiolab.sagemaker.aws/studiolab.svg)](https://studiolab.sagemaker.aws/import/github/huggingface/notebooks/blob/main/examples/onnx-export.ipynb)|
 | [How to use Benchmarks](https://github.com/huggingface/notebooks/blob/main/examples/benchmark.ipynb)| How to benchmark models with transformers | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/examples/benchmark.ipynb)| [![Open in AWS Studio](https://studiolab.sagemaker.aws/studiolab.svg)](https://studiolab.sagemaker.aws/import/github/huggingface/notebooks/blob/main/examples/benchmark.ipynb)|
 
 ### TensorFlow Examples

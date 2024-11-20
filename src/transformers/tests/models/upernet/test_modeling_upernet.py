@@ -15,7 +15,6 @@
 """ Testing suite for the PyTorch UperNet framework. """
 
 
-import inspect
 import unittest
 
 from huggingface_hub import hf_hub_download
@@ -33,7 +32,6 @@ if is_torch_available():
     import torch
 
     from transformers import UperNetForSemanticSegmentation
-    from transformers.models.upernet.modeling_upernet import UPERNET_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -51,7 +49,7 @@ class UperNetModelTester:
         num_channels=3,
         num_stages=4,
         hidden_sizes=[10, 20, 30, 40],
-        depths=[2, 2, 3, 2],
+        depths=[1, 1, 1, 1],
         is_training=True,
         use_labels=True,
         intermediate_size=37,
@@ -106,12 +104,13 @@ class UperNetModelTester:
     def get_config(self):
         return UperNetConfig(
             backbone_config=self.get_backbone_config(),
-            hidden_size=512,
+            backbone=None,
+            hidden_size=64,
             pool_scales=[1, 2, 3, 6],
             use_auxiliary_head=True,
             auxiliary_loss_weight=0.4,
             auxiliary_in_channels=40,
-            auxiliary_channels=256,
+            auxiliary_channels=32,
             auxiliary_num_convs=1,
             auxiliary_concat_input=False,
             loss_ignore_index=255,
@@ -170,18 +169,6 @@ class UperNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase)
     def create_and_test_config_common_properties(self):
         return
 
-    def test_forward_signature(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            signature = inspect.signature(model.forward)
-            # signature.parameters is an OrderedDict => so arg_names order is deterministic
-            arg_names = [*signature.parameters.keys()]
-
-            expected_arg_names = ["pixel_values"]
-            self.assertListEqual(arg_names[:1], expected_arg_names)
-
     def test_for_semantic_segmentation(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_for_semantic_segmentation(*config_and_inputs)
@@ -205,10 +192,6 @@ class UperNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase)
     @require_torch_multi_gpu
     @unittest.skip(reason="UperNet has some layers using `add_module` which doesn't work well with `nn.DataParallel`")
     def test_multi_gpu_data_parallel_forward(self):
-        pass
-
-    @unittest.skip("Will be fixed soon by reducing the size of the model used for common tests.")
-    def test_model_is_small(self):
         pass
 
     def test_hidden_states_output(self):
@@ -264,9 +247,9 @@ class UperNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase)
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in UPERNET_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = UperNetForSemanticSegmentation.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "openmmlab/upernet-convnext-tiny"
+        model = UperNetForSemanticSegmentation.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 # We will verify our results on an image of ADE20k

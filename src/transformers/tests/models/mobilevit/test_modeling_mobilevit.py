@@ -15,7 +15,6 @@
 """ Testing suite for the PyTorch MobileViT model. """
 
 
-import inspect
 import unittest
 
 from transformers import MobileViTConfig
@@ -31,7 +30,6 @@ if is_torch_available():
     import torch
 
     from transformers import MobileViTForImageClassification, MobileViTForSemanticSegmentation, MobileViTModel
-    from transformers.models.mobilevit.modeling_mobilevit import MOBILEVIT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -56,7 +54,7 @@ class MobileViTModelTester:
         image_size=32,
         patch_size=2,
         num_channels=3,
-        last_hidden_size=640,
+        last_hidden_size=32,
         num_attention_heads=4,
         hidden_act="silu",
         conv_kernel_size=3,
@@ -115,6 +113,8 @@ class MobileViTModelTester:
             attention_probs_dropout_prob=self.attention_probs_dropout_prob,
             classifier_dropout_prob=self.classifier_dropout_prob,
             initializer_range=self.initializer_range,
+            hidden_sizes=[12, 16, 20],
+            neck_hidden_sizes=[8, 8, 16, 16, 32, 32, 32],
         )
 
     def create_and_check_model(self, config, pixel_values, labels, pixel_labels):
@@ -187,7 +187,7 @@ class MobileViTModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCas
     )
     pipeline_model_mapping = (
         {
-            "feature-extraction": MobileViTModel,
+            "image-feature-extraction": MobileViTModel,
             "image-classification": MobileViTForImageClassification,
             "image-segmentation": MobileViTForSemanticSegmentation,
         }
@@ -217,22 +217,6 @@ class MobileViTModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCas
 
     @unittest.skip(reason="MobileViT does not output attentions")
     def test_attention_outputs(self):
-        pass
-
-    def test_forward_signature(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            signature = inspect.signature(model.forward)
-            # signature.parameters is an OrderedDict => so arg_names order is deterministic
-            arg_names = [*signature.parameters.keys()]
-
-            expected_arg_names = ["pixel_values"]
-            self.assertListEqual(arg_names[:1], expected_arg_names)
-
-    @unittest.skip("Will be fixed soon by reducing the size of the model used for common tests.")
-    def test_model_is_small(self):
         pass
 
     def test_model(self):
@@ -287,9 +271,9 @@ class MobileViTModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCas
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in MOBILEVIT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = MobileViTModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "apple/mobilevit-small"
+        model = MobileViTModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 # We will verify our results on an image of cute cats

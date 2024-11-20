@@ -53,18 +53,12 @@ Important note: you need to be able to host the whole model in RAM to execute th
 come in several checkpoints they each contain a part of each weight of the model, so we need to load them all in RAM).
 """
 
-INTERMEDIATE_SIZE_MAP = {
-    "7B": 11008,
-    "13B": 13824,
-    "30B": 17920,
-    "65B": 22016,
-    "70B": 28672,
-}
 NUM_SHARDS = {
     "7B": 1,
     "7Bf": 1,
     "13B": 2,
     "13Bf": 2,
+    "34B": 4,
     "30B": 4,
     "65B": 8,
     "70B": 8,
@@ -86,22 +80,48 @@ def write_json(text, path):
         json.dump(text, f)
 
 
-def write_model(model_path, input_base_path, model_size, safe_serialization=True):
+def write_model(
+    model_path, input_base_path, model_size, tokenizer_path=None, safe_serialization=True, llama_version=1
+):
+    # for backward compatibility, before you needed the repo to be called `my_repo/model_size`
+    if not os.path.isfile(os.path.join(input_base_path, "params.json")):
+        input_base_path = os.path.join(input_base_path, model_size)
+
     os.makedirs(model_path, exist_ok=True)
     tmp_model_path = os.path.join(model_path, "tmp")
     os.makedirs(tmp_model_path, exist_ok=True)
 
     params = read_json(os.path.join(input_base_path, "params.json"))
     num_shards = NUM_SHARDS[model_size]
+    params = params.get("model", params)
     n_layers = params["n_layers"]
     n_heads = params["n_heads"]
     n_heads_per_shard = n_heads // num_shards
     dim = params["dim"]
     dims_per_head = dim // n_heads
-    base = 10000.0
+    base = params.get("rope_theta", 10000.0)
     inv_freq = 1.0 / (base ** (torch.arange(0, dims_per_head, 2).float() / dims_per_head))
+    if base > 10000.0:
+        max_position_embeddings = 16384
+    else:
+        # Depending on the Llama version, the default max_position_embeddings has different values.
+        if llama_version == 1:
+            max_position_embeddings = 2048
+        elif llama_version == 2:
+            max_position_embeddings = 4096
+        else:
+            raise NotImplementedError(
+                f"Version {llama_version} of llama is not supported yet. "
+                "Current supported versions of llama are [1, 2]."
+            )
 
-    if "n_kv_heads" in params:
+    tokenizer_class = LlamaTokenizer if LlamaTokenizerFast is None else LlamaTokenizerFast
+    if tokenizer_path is not None:
+        tokenizer = tokenizer_class(tokenizer_path)
+        tokenizer.save_pretrained(model_path)
+    vocab_size = tokenizer.vocab_size if tokenizer_path is not None else 32000
+
+    if params.get("n_kv_heads", None) is not None:
         num_key_value_heads = params["n_kv_heads"]  # for GQA / MQA
         num_local_key_value_heads = n_heads_per_shard // num_key_value_heads
         key_value_dim = dim // num_key_value_heads
@@ -116,7 +136,7 @@ def write_model(model_path, input_base_path, model_size, safe_serialization=True
 
     print(f"Fetching all parameters from the checkpoint at {input_base_path}.")
     # Load weights
-    if model_size == "7B":
+    if num_shards == 1:
         # Not sharded
         # (The sharded implementation would also work, but this is simpler.)
         loaded = torch.load(os.path.join(input_base_path, "consolidated.00.pth"), map_location="cpu")
@@ -130,7 +150,7 @@ def write_model(model_path, input_base_path, model_size, safe_serialization=True
     index_dict = {"weight_map": {}}
     for layer_i in range(n_layers):
         filename = f"pytorch_model-{layer_i + 1}-of-{n_layers + 1}.bin"
-        if model_size == "7B":
+        if num_shards == 1:
             # Unsharded
             state_dict = {
                 f"model.layers.{layer_i}.self_attn.q_proj.weight": permute(
@@ -214,7 +234,7 @@ def write_model(model_path, input_base_path, model_size, safe_serialization=True
         torch.save(state_dict, os.path.join(tmp_model_path, filename))
 
     filename = f"pytorch_model-{n_layers + 1}-of-{n_layers + 1}.bin"
-    if model_size == "7B":
+    if num_shards == 1:
         # Unsharded
         state_dict = {
             "model.embed_tokens.weight": loaded["tok_embeddings.weight"],
@@ -247,6 +267,9 @@ def write_model(model_path, input_base_path, model_size, safe_serialization=True
         num_hidden_layers=params["n_layers"],
         rms_norm_eps=params["norm_eps"],
         num_key_value_heads=num_key_value_heads,
+        vocab_size=vocab_size,
+        rope_theta=base,
+        max_position_embeddings=max_position_embeddings,
     )
     config.save_pretrained(tmp_model_path)
 
@@ -256,10 +279,10 @@ def write_model(model_path, input_base_path, model_size, safe_serialization=True
     gc.collect()
 
     print("Loading the checkpoint in a Llama model.")
-    model = LlamaForCausalLM.from_pretrained(tmp_model_path, torch_dtype=torch.float16, low_cpu_mem_usage=True)
+    model = LlamaForCausalLM.from_pretrained(tmp_model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True)
     # Avoid saving this as part of the config.
     del model.config._name_or_path
-
+    model.config.torch_dtype = torch.float16
     print("Saving in the Transformers format.")
     model.save_pretrained(model_path, safe_serialization=safe_serialization)
     shutil.rmtree(tmp_model_path)
@@ -281,23 +304,35 @@ def main():
     )
     parser.add_argument(
         "--model_size",
-        choices=["7B", "7Bf", "13B", "13Bf", "30B", "65B", "70B", "70Bf", "tokenizer_only"],
+        choices=["7B", "7Bf", "13B", "13Bf", "30B", "34B", "65B", "70B", "70Bf", "tokenizer_only"],
+        help="'f' models correspond to the finetuned versions, and are specific to the Llama2 official release. For more details on Llama2, checkout the original repo: https://huggingface.co/meta-llama",
     )
     parser.add_argument(
         "--output_dir",
         help="Location to write HF model and tokenizer",
     )
     parser.add_argument("--safe_serialization", type=bool, help="Whether or not to save using `safetensors`.")
+    # Different Llama versions used different default values for max_position_embeddings, hence the need to be able to specify which version is being used.
+    parser.add_argument(
+        "--llama_version",
+        choices=[1, 2],
+        default=1,
+        type=int,
+        help="Version of the Llama model to convert. Currently supports Llama1 and Llama2. Controls the context size",
+    )
     args = parser.parse_args()
+    spm_path = os.path.join(args.input_dir, "tokenizer.model")
     if args.model_size != "tokenizer_only":
         write_model(
             model_path=args.output_dir,
-            input_base_path=os.path.join(args.input_dir, args.model_size),
+            input_base_path=args.input_dir,
             model_size=args.model_size,
             safe_serialization=args.safe_serialization,
+            tokenizer_path=spm_path,
+            llama_version=args.llama_version,
         )
-    spm_path = os.path.join(args.input_dir, "tokenizer.model")
-    write_tokenizer(args.output_dir, spm_path)
+    else:
+        write_tokenizer(args.output_dir, spm_path)
 
 
 if __name__ == "__main__":

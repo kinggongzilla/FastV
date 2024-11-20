@@ -46,6 +46,7 @@ if is_torch_available():
     import torch
 
 if is_accelerate_available():
+    from accelerate import PartialState
     from accelerate.utils import send_to_device
 
 
@@ -185,6 +186,14 @@ class Tool:
         """
         Loads a tool defined on the Hub.
 
+        <Tip warning={true}>
+
+        Loading a tool from the Hub means that you'll download the tool and execute it locally.
+        ALWAYS inspect the tool you're downloading before loading it within your runtime, as you would do when
+        installing a package using pip/npm/apt.
+
+        </Tip>
+
         Args:
             repo_id (`str`):
                 The name of the repo on the Hub where your tool is defined.
@@ -226,8 +235,9 @@ class Tool:
         resolved_config_file = cached_file(
             repo_id,
             TOOL_CONFIG_FILE,
-            use_auth_token=token,
+            token=token,
             **hub_kwargs,
+            _raise_exceptions_for_gated_repo=False,
             _raise_exceptions_for_missing_entries=False,
             _raise_exceptions_for_connection_errors=False,
         )
@@ -236,8 +246,9 @@ class Tool:
             resolved_config_file = cached_file(
                 repo_id,
                 CONFIG_NAME,
-                use_auth_token=token,
+                token=token,
                 **hub_kwargs,
+                _raise_exceptions_for_gated_repo=False,
                 _raise_exceptions_for_missing_entries=False,
                 _raise_exceptions_for_connection_errors=False,
             )
@@ -259,12 +270,12 @@ class Tool:
             custom_tool = config
 
         tool_class = custom_tool["tool_class"]
-        tool_class = get_class_from_dynamic_module(tool_class, repo_id, use_auth_token=token, **hub_kwargs)
+        tool_class = get_class_from_dynamic_module(tool_class, repo_id, token=token, **hub_kwargs)
 
         if len(tool_class.name) == 0:
             tool_class.name = custom_tool["name"]
         if tool_class.name != custom_tool["name"]:
-            logger.warn(
+            logger.warning(
                 f"{tool_class.__name__} implements a different name in its configuration and class. Using the tool "
                 "configuration name."
             )
@@ -273,7 +284,7 @@ class Tool:
         if len(tool_class.description) == 0:
             tool_class.description = custom_tool["description"]
         if tool_class.description != custom_tool["description"]:
-            logger.warn(
+            logger.warning(
                 f"{tool_class.__name__} implements a different description in its configuration and class. Using the "
                 "tool configuration description."
             )
@@ -348,7 +359,7 @@ class RemoteTool(Tool):
     A [`Tool`] that will make requests to an inference endpoint.
 
     Args:
-        endpoint_url (`str`):
+        endpoint_url (`str`, *optional*):
             The url of the endpoint to use.
         token (`str`, *optional*):
             The token to use as HTTP bearer authorization for remote files. If unset, will use the token generated when
@@ -506,7 +517,7 @@ class PipelineTool(Tool):
         if device_map is not None:
             self.model_kwargs["device_map"] = device_map
         self.hub_kwargs = hub_kwargs
-        self.hub_kwargs["use_auth_token"] = token
+        self.hub_kwargs["token"] = token
 
         super().__init__()
 
@@ -529,7 +540,7 @@ class PipelineTool(Tool):
             if self.device_map is not None:
                 self.device = list(self.model.hf_device_map.values())[0]
             else:
-                self.device = get_default_device()
+                self.device = PartialState().default_device
 
         if self.device_map is None:
             self.model.to(self.device)
@@ -597,19 +608,6 @@ def launch_gradio_demo(tool_class: Tool):
     ).launch()
 
 
-# TODO: Migrate to Accelerate for this once `PartialState.default_device` makes its way into a release.
-def get_default_device():
-    if not is_torch_available():
-        raise ImportError("Please install torch in order to use this tool.")
-
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        return torch.device("mps")
-    elif torch.cuda.is_available():
-        return torch.device("cuda")
-    else:
-        return torch.device("cpu")
-
-
 TASK_MAPPING = {
     "document-question-answering": "DocumentQuestionAnsweringTool",
     "image-captioning": "ImageCaptioningTool",
@@ -639,6 +637,14 @@ def supports_remote(task_or_repo_id):
 def load_tool(task_or_repo_id, model_repo_id=None, remote=False, token=None, **kwargs):
     """
     Main function to quickly load a tool, be it on the Hub or in the Transformers library.
+
+    <Tip warning={true}>
+
+    Loading a tool means that you'll download the tool and execute it locally.
+    ALWAYS inspect the tool you're downloading before loading it within your runtime, as you would do when
+    installing a package using pip/npm/apt.
+
+    </Tip>
 
     Args:
         task_or_repo_id (`str`):
@@ -687,6 +693,12 @@ def load_tool(task_or_repo_id, model_repo_id=None, remote=False, token=None, **k
         else:
             return tool_class(model_repo_id, token=token, **kwargs)
     else:
+        logger.warning_once(
+            f"You're loading a tool from the Hub from {model_repo_id}. Please make sure this is a source that you "
+            f"trust as the code within that tool will be executed on your machine. Always verify the code of "
+            f"the tools that you load. We recommend specifying a `revision` to ensure you're loading the "
+            f"code that you have checked."
+        )
         return Tool.from_hub(task_or_repo_id, model_repo_id=model_repo_id, token=token, remote=remote, **kwargs)
 
 

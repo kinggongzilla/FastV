@@ -17,7 +17,7 @@ Audio processing functions to extract features from audio waveforms. This code i
 and remove unnecessary dependencies.
 """
 import warnings
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 
@@ -30,17 +30,19 @@ def hertz_to_mel(freq: Union[float, np.ndarray], mel_scale: str = "htk") -> Unio
         freq (`float` or `np.ndarray`):
             The frequency, or multiple frequencies, in hertz (Hz).
         mel_scale (`str`, *optional*, defaults to `"htk"`):
-            The mel frequency scale to use, `"htk"` or `"slaney"`.
+            The mel frequency scale to use, `"htk"`, `"kaldi"` or `"slaney"`.
 
     Returns:
         `float` or `np.ndarray`: The frequencies on the mel scale.
     """
 
-    if mel_scale not in ["slaney", "htk"]:
-        raise ValueError('mel_scale should be one of "htk" or "slaney".')
+    if mel_scale not in ["slaney", "htk", "kaldi"]:
+        raise ValueError('mel_scale should be one of "htk", "slaney" or "kaldi".')
 
     if mel_scale == "htk":
         return 2595.0 * np.log10(1.0 + (freq / 700.0))
+    elif mel_scale == "kaldi":
+        return 1127.0 * np.log(1.0 + (freq / 700.0))
 
     min_log_hertz = 1000.0
     min_log_mel = 15.0
@@ -64,17 +66,19 @@ def mel_to_hertz(mels: Union[float, np.ndarray], mel_scale: str = "htk") -> Unio
         mels (`float` or `np.ndarray`):
             The frequency, or multiple frequencies, in mels.
         mel_scale (`str`, *optional*, `"htk"`):
-            The mel frequency scale to use, `"htk"` or `"slaney"`.
+            The mel frequency scale to use, `"htk"`, `"kaldi"` or `"slaney"`.
 
     Returns:
         `float` or `np.ndarray`: The frequencies in hertz.
     """
 
-    if mel_scale not in ["slaney", "htk"]:
-        raise ValueError('mel_scale should be one of "htk" or "slaney".')
+    if mel_scale not in ["slaney", "htk", "kaldi"]:
+        raise ValueError('mel_scale should be one of "htk", "slaney" or "kaldi".')
 
     if mel_scale == "htk":
-        return 700.0 * (10.0 ** (mels / 2595.0) - 1.0)
+        return 700.0 * (np.power(10, mels / 2595.0) - 1.0)
+    elif mel_scale == "kaldi":
+        return 700.0 * (np.exp(mels / 1127.0) - 1.0)
 
     min_log_hertz = 1000.0
     min_log_mel = 15.0
@@ -88,6 +92,29 @@ def mel_to_hertz(mels: Union[float, np.ndarray], mel_scale: str = "htk") -> Unio
         freq = min_log_hertz * np.exp(logstep * (mels - min_log_mel))
 
     return freq
+
+
+def hertz_to_octave(
+    freq: Union[float, np.ndarray], tuning: Optional[float] = 0.0, bins_per_octave: Optional[int] = 12
+):
+    """
+    Convert frequency from hertz to fractional octave numbers.
+    Adapted from *librosa*.
+
+    Args:
+        freq (`float` or `np.ndarray`):
+            The frequency, or multiple frequencies, in hertz (Hz).
+        tuning (`float`, defaults to `0.`):
+            Tuning deviation from the Stuttgart pitch (A440) in (fractional) bins per octave.
+        bins_per_octave (`int`, defaults to `12`):
+            Number of bins per octave.
+
+    Returns:
+        `float` or `np.ndarray`: The frequencies on the octave scale.
+    """
+    stuttgart_pitch = 440.0 * 2.0 ** (tuning / bins_per_octave)
+    octave = np.log2(freq / (float(stuttgart_pitch) / 16))
+    return octave
 
 
 def _create_triangular_filter_bank(fft_freqs: np.ndarray, filter_freqs: np.ndarray) -> np.ndarray:
@@ -112,6 +139,81 @@ def _create_triangular_filter_bank(fft_freqs: np.ndarray, filter_freqs: np.ndarr
     return np.maximum(np.zeros(1), np.minimum(down_slopes, up_slopes))
 
 
+def chroma_filter_bank(
+    num_frequency_bins: int,
+    num_chroma: int,
+    sampling_rate: int,
+    tuning: float = 0.0,
+    power: Optional[float] = 2.0,
+    weighting_parameters: Optional[Tuple[float]] = (5.0, 2),
+    start_at_c_chroma: Optional[bool] = True,
+):
+    """
+    Creates a chroma filter bank, i.e a linear transformation to project spectrogram bins onto chroma bins.
+
+    Adapted from *librosa*.
+
+    Args:
+        num_frequency_bins (`int`):
+            Number of frequencies used to compute the spectrogram (should be the same as in `stft`).
+        num_chroma (`int`):
+            Number of chroma bins (i.e pitch classes).
+        sampling_rate (`float`):
+            Sample rate of the audio waveform.
+        tuning (`float`):
+            Tuning deviation from A440 in fractions of a chroma bin.
+        power (`float`, *optional*, defaults to 2.0):
+            If 12.0, normalizes each column with their L2 norm. If 1.0, normalizes each column with their L1 norm.
+        weighting_parameters (`Tuple[float]`, *optional*, defaults to `(5., 2.)`):
+            If specified, apply a Gaussian weighting parameterized by the first element of the tuple being the center and
+            the second element being the Gaussian half-width.
+        start_at_c_chroma (`float`, *optional*, defaults to `True`):
+            If True, the filter bank will start at the 'C' pitch class. Otherwise, it will start at 'A'.
+    Returns:
+        `np.ndarray` of shape `(num_frequency_bins, num_chroma)`
+    """
+    # Get the FFT bins, not counting the DC component
+    frequencies = np.linspace(0, sampling_rate, num_frequency_bins, endpoint=False)[1:]
+
+    freq_bins = num_chroma * hertz_to_octave(frequencies, tuning=tuning, bins_per_octave=num_chroma)
+
+    # make up a value for the 0 Hz bin = 1.5 octaves below bin 1
+    # (so chroma is 50% rotated from bin 1, and bin width is broad)
+    freq_bins = np.concatenate(([freq_bins[0] - 1.5 * num_chroma], freq_bins))
+
+    bins_width = np.concatenate((np.maximum(freq_bins[1:] - freq_bins[:-1], 1.0), [1]))
+
+    chroma_filters = np.subtract.outer(freq_bins, np.arange(0, num_chroma, dtype="d")).T
+
+    num_chroma2 = np.round(float(num_chroma) / 2)
+
+    # Project into range -num_chroma/2 .. num_chroma/2
+    # add on fixed offset of 10*num_chroma to ensure all values passed to
+    # rem are positive
+    chroma_filters = np.remainder(chroma_filters + num_chroma2 + 10 * num_chroma, num_chroma) - num_chroma2
+
+    # Gaussian bumps - 2*D to make them narrower
+    chroma_filters = np.exp(-0.5 * (2 * chroma_filters / np.tile(bins_width, (num_chroma, 1))) ** 2)
+
+    # normalize each column
+    if power is not None:
+        chroma_filters = chroma_filters / np.sum(chroma_filters**power, axis=0, keepdims=True) ** (1.0 / power)
+
+    # Maybe apply scaling for fft bins
+    if weighting_parameters is not None:
+        center, half_width = weighting_parameters
+        chroma_filters *= np.tile(
+            np.exp(-0.5 * (((freq_bins / num_chroma - center) / half_width) ** 2)),
+            (num_chroma, 1),
+        )
+
+    if start_at_c_chroma:
+        chroma_filters = np.roll(chroma_filters, -3 * (num_chroma // 12), axis=0)
+
+    # remove aliasing columns, copy to ensure row-contiguity
+    return np.ascontiguousarray(chroma_filters[:, : int(1 + num_frequency_bins / 2)])
+
+
 def mel_filter_bank(
     num_frequency_bins: int,
     num_mel_filters: int,
@@ -120,6 +222,7 @@ def mel_filter_bank(
     sampling_rate: int,
     norm: Optional[str] = None,
     mel_scale: str = "htk",
+    triangularize_in_mel_space: bool = False,
 ) -> np.ndarray:
     """
     Creates a frequency bin conversion matrix used to obtain a mel spectrogram. This is called a *mel filter bank*, and
@@ -155,7 +258,10 @@ def mel_filter_bank(
         norm (`str`, *optional*):
             If `"slaney"`, divide the triangular mel weights by the width of the mel band (area normalization).
         mel_scale (`str`, *optional*, defaults to `"htk"`):
-            The mel frequency scale to use, `"htk"` or `"slaney"`.
+            The mel frequency scale to use, `"htk"`, `"kaldi"` or `"slaney"`.
+        triangularize_in_mel_space (`bool`, *optional*, defaults to `False`):
+            If this option is enabled, the triangular filter is applied in mel space rather than frequency space. This
+            should be set to `true` in order to get the same results as `torchaudio` when computing mel filters.
 
     Returns:
         `np.ndarray` of shape (`num_frequency_bins`, `num_mel_filters`): Triangular filter bank matrix. This is a
@@ -164,14 +270,20 @@ def mel_filter_bank(
     if norm is not None and norm != "slaney":
         raise ValueError('norm must be one of None or "slaney"')
 
-    # frequencies of FFT bins in Hz
-    fft_freqs = np.linspace(0, sampling_rate // 2, num_frequency_bins)
-
     # center points of the triangular mel filters
     mel_min = hertz_to_mel(min_frequency, mel_scale=mel_scale)
     mel_max = hertz_to_mel(max_frequency, mel_scale=mel_scale)
     mel_freqs = np.linspace(mel_min, mel_max, num_mel_filters + 2)
     filter_freqs = mel_to_hertz(mel_freqs, mel_scale=mel_scale)
+
+    if triangularize_in_mel_space:
+        # frequencies of FFT bins in Hz, but filters triangularized in mel space
+        fft_bin_width = sampling_rate / (num_frequency_bins * 2)
+        fft_freqs = hertz_to_mel(fft_bin_width * np.arange(num_frequency_bins), mel_scale=mel_scale)
+        filter_freqs = mel_freqs
+    else:
+        # frequencies of FFT bins in Hz
+        fft_freqs = np.linspace(0, sampling_rate // 2, num_frequency_bins)
 
     mel_filters = _create_triangular_filter_bank(fft_freqs, filter_freqs)
 
@@ -218,6 +330,7 @@ def window_function(
         - `"boxcar"`: a rectangular window
         - `"hamming"`: the Hamming window
         - `"hann"`: the Hann window
+        - `"povey"`: the Povey window
 
     Args:
         window_length (`int`):
@@ -243,6 +356,8 @@ def window_function(
         window = np.hamming(length)
     elif name in ["hann", "hann_window"]:
         window = np.hanning(length)
+    elif name in ["povey"]:
+        window = np.power(np.hanning(length), 0.85)
     else:
         raise ValueError(f"Unknown window function '{name}'")
 
@@ -281,6 +396,7 @@ def spectrogram(
     reference: float = 1.0,
     min_value: float = 1e-10,
     db_range: Optional[float] = None,
+    remove_dc_offset: Optional[bool] = None,
     dtype: np.dtype = np.float32,
 ) -> np.ndarray:
     """
@@ -363,6 +479,9 @@ def spectrogram(
         db_range (`float`, *optional*):
             Sets the maximum dynamic range in decibels. For example, if `db_range = 80`, the difference between the
             peak value and the smallest value will never be more than 80 dB. Must be greater than zero.
+        remove_dc_offset (`bool`, *optional*):
+            Subtract mean from waveform on each frame, applied before pre-emphasis. This should be set to `true` in
+            order to get the same results as `torchaudio.compliance.kaldi.fbank` when computing mel filters.
         dtype (`np.dtype`, *optional*, defaults to `np.float32`):
             Data type of the spectrogram tensor. If `power` is None, this argument is ignored and the dtype will be
             `np.complex64`.
@@ -391,6 +510,12 @@ def spectrogram(
     if np.iscomplexobj(waveform):
         raise ValueError("Complex-valued input waveforms are not currently supported")
 
+    if power is None and mel_filters is not None:
+        raise ValueError(
+            "You have provided `mel_filters` but `power` is `None`. Mel spectrogram computation is not yet supported for complex-valued spectrogram."
+            "Specify `power` to fix this issue."
+        )
+
     # center pad the waveform
     if center:
         padding = [(int(frame_length // 2), int(frame_length // 2))]
@@ -413,6 +538,9 @@ def spectrogram(
     timestep = 0
     for frame_idx in range(num_frames):
         buffer[:frame_length] = waveform[timestep : timestep + frame_length]
+
+        if remove_dc_offset:
+            buffer[:frame_length] = buffer[:frame_length] - buffer[:frame_length].mean()
 
         if preemphasis is not None:
             buffer[1:frame_length] -= preemphasis * buffer[: frame_length - 1]

@@ -23,18 +23,20 @@ Get up and running with 🤗 Transformers! Whether you're a developer or an ever
 Before you begin, make sure you have all the necessary libraries installed:
 
 ```bash
-!pip install transformers datasets
+!pip install transformers datasets evaluate accelerate
 ```
 
 You'll also need to install your preferred machine learning framework:
 
 <frameworkcontent>
 <pt>
+
 ```bash
 pip install torch
 ```
 </pt>
 <tf>
+
 ```bash
 pip install tensorflow
 ```
@@ -64,7 +66,7 @@ For a complete list of available tasks, check out the [pipeline API reference](.
 | Audio classification         | assign a label to some audio data                                                                            | Audio           | pipeline(task=“audio-classification”)         |
 | Automatic speech recognition | transcribe speech into text                                                                                  | Audio           | pipeline(task=“automatic-speech-recognition”) |
 | Visual question answering    | answer a question about the image, given an image and a question                                             | Multimodal      | pipeline(task=“vqa”)                          |
-| Document question answering  | answer a question about a document, given an image and a question                                            | Multimodal      | pipeline(task="document-question-answering")  |
+| Document question answering  | answer a question about the document, given a document and a question                                        | Multimodal      | pipeline(task="document-question-answering")  |
 | Image captioning             | generate a caption for a given image                                                                         | Multimodal      | pipeline(task="image-to-text")                |
 
 Start by creating an instance of [`pipeline`] and specifying a task you want to use it for. In this guide, you'll use the [`pipeline`] for sentiment analysis as an example:
@@ -75,7 +77,7 @@ Start by creating an instance of [`pipeline`] and specifying a task you want to 
 >>> classifier = pipeline("sentiment-analysis")
 ```
 
-The [`pipeline`] downloads and caches a default [pretrained model](https://huggingface.co/distilbert-base-uncased-finetuned-sst-2-english) and tokenizer for sentiment analysis. Now you can use the `classifier` on your target text:
+The [`pipeline`] downloads and caches a default [pretrained model](https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english) and tokenizer for sentiment analysis. Now you can use the `classifier` on your target text:
 
 ```py
 >>> classifier("We are very happy to show you the 🤗 Transformers library.")
@@ -208,6 +210,7 @@ A tokenizer can also accept a list of inputs, and pad and truncate the text to r
 
 <frameworkcontent>
 <pt>
+
 ```py
 >>> pt_batch = tokenizer(
 ...     ["We are very happy to show you the 🤗 Transformers library.", "We hope you don't hate it."],
@@ -219,6 +222,7 @@ A tokenizer can also accept a list of inputs, and pad and truncate the text to r
 ```
 </pt>
 <tf>
+
 ```py
 >>> tf_batch = tokenizer(
 ...     ["We are very happy to show you the 🤗 Transformers library.", "We hope you don't hate it."],
@@ -289,7 +293,7 @@ See the [task summary](./task_summary) for tasks supported by an [`AutoModel`] c
 
 </Tip>
 
-Now pass your preprocessed batch of inputs directly to the model by passing the dictionary keys directly to the tensors:
+Now pass your preprocessed batch of inputs directly to the model. You can pass the tensors as-is:
 
 ```py
 >>> tf_outputs = tf_model(tf_batch)
@@ -352,6 +356,7 @@ One particularly cool 🤗 Transformers feature is the ability to save a model a
 
 <frameworkcontent>
 <pt>
+
 ```py
 >>> from transformers import AutoModel
 
@@ -360,6 +365,7 @@ One particularly cool 🤗 Transformers feature is the ability to save a model a
 ```
 </pt>
 <tf>
+
 ```py
 >>> from transformers import TFAutoModel
 
@@ -378,7 +384,7 @@ Start by importing [`AutoConfig`], and then load the pretrained model you want t
 ```py
 >>> from transformers import AutoConfig
 
->>> my_config = AutoConfig.from_pretrained("distilbert-base-uncased", n_heads=12)
+>>> my_config = AutoConfig.from_pretrained("distilbert/distilbert-base-uncased", n_heads=12)
 ```
 
 <frameworkcontent>
@@ -410,12 +416,12 @@ All models are a standard [`torch.nn.Module`](https://pytorch.org/docs/stable/nn
 
 Depending on your task, you'll typically pass the following parameters to [`Trainer`]:
 
-1. A [`PreTrainedModel`] or a [`torch.nn.Module`](https://pytorch.org/docs/stable/nn.html#torch.nn.Module):
+1. You'll start with a [`PreTrainedModel`] or a [`torch.nn.Module`](https://pytorch.org/docs/stable/nn.html#torch.nn.Module):
 
    ```py
    >>> from transformers import AutoModelForSequenceClassification
 
-   >>> model = AutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased")
+   >>> model = AutoModelForSequenceClassification.from_pretrained("distilbert/distilbert-base-uncased")
    ```
 
 2. [`TrainingArguments`] contains the model hyperparameters you can change like learning rate, batch size, and the number of epochs to train for. The default values are used if you don't specify any training arguments:
@@ -432,12 +438,12 @@ Depending on your task, you'll typically pass the following parameters to [`Trai
    ... )
    ```
 
-3. A preprocessing class like a tokenizer, image processor, feature extractor, or processor:
+3. Load a preprocessing class like a tokenizer, image processor, feature extractor, or processor:
 
    ```py
    >>> from transformers import AutoTokenizer
 
-   >>> tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+   >>> tokenizer = AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
    ```
 
 4. Load a dataset:
@@ -509,15 +515,15 @@ All models are a standard [`tf.keras.Model`](https://www.tensorflow.org/api_docs
    ```py
    >>> from transformers import TFAutoModelForSequenceClassification
 
-   >>> model = TFAutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased")
+   >>> model = TFAutoModelForSequenceClassification.from_pretrained("distilbert/distilbert-base-uncased")
    ```
 
-2. A preprocessing class like a tokenizer, image processor, feature extractor, or processor:
+2. Load a preprocessing class like a tokenizer, image processor, feature extractor, or processor:
 
    ```py
    >>> from transformers import AutoTokenizer
 
-   >>> tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+   >>> tokenizer = AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
    ```
 
 3. Create a function to tokenize the dataset:
@@ -541,7 +547,7 @@ All models are a standard [`tf.keras.Model`](https://www.tensorflow.org/api_docs
    ```py
    >>> from tensorflow.keras.optimizers import Adam
 
-   >>> model.compile(optimizer=Adam(3e-5))  # No loss argument!
+   >>> model.compile(optimizer='adam')  # No loss argument!
    >>> model.fit(tf_dataset)  # doctest: +SKIP
    ```
 

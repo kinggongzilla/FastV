@@ -57,6 +57,8 @@ else:
         "T5PreTrainedModel",
         "load_tf_weights_in_t5",
         "T5ForQuestionAnswering",
+        "T5ForSequenceClassification",
+        "T5ForTokenClassification",
     ]
 
 try:
@@ -117,6 +119,8 @@ if TYPE_CHECKING:
             T5EncoderModel,
             T5ForConditionalGeneration,
             T5ForQuestionAnswering,
+            T5ForSequenceClassification,
+            T5ForTokenClassification,
             T5Model,
             T5PreTrainedModel,
             load_tf_weights_in_t5,

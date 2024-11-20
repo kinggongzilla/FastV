@@ -53,14 +53,7 @@ _QA_TARGET_START_INDEX = 12
 _QA_TARGET_END_INDEX = 14
 
 
-DEBERTA_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "microsoft/deberta-base",
-    "microsoft/deberta-large",
-    "microsoft/deberta-xlarge",
-    "microsoft/deberta-base-mnli",
-    "microsoft/deberta-large-mnli",
-    "microsoft/deberta-xlarge-mnli",
-]
+from ..deprecated._archive_maps import DEBERTA_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 class ContextPooler(nn.Module):
@@ -457,20 +450,14 @@ class DebertaEncoder(nn.Module):
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, output_attentions)
-
-                    return custom_forward
-
-                hidden_states = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
+                hidden_states = self._gradient_checkpointing_func(
+                    layer_module.__call__,
                     next_kv,
                     attention_mask,
                     query_states,
                     relative_pos,
                     rel_embeddings,
+                    output_attentions,
                 )
             else:
                 hidden_states = layer_module(
@@ -839,10 +826,6 @@ class DebertaPreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, DebertaEncoder):
-            module.gradient_checkpointing = value
-
 
 DEBERTA_START_DOCSTRING = r"""
     The DeBERTa model was proposed in [DeBERTa: Decoding-enhanced BERT with Disentangled
@@ -959,6 +942,7 @@ class DebertaModel(DebertaPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]

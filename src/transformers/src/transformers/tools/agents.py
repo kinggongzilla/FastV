@@ -25,7 +25,7 @@ import requests
 from huggingface_hub import HfFolder, hf_hub_download, list_spaces
 
 from ..models.auto import AutoTokenizer
-from ..utils import is_openai_available, is_torch_available, logging
+from ..utils import is_offline_mode, is_openai_available, is_torch_available, logging
 from .base import TASK_MAPPING, TOOL_CONFIG_FILE, Tool, load_tool, supports_remote
 from .prompts import CHAT_MESSAGE_PROMPT, download_prompt
 from .python_interpreter import evaluate
@@ -75,6 +75,10 @@ HUGGINGFACE_DEFAULT_TOOLS_FROM_HUB = [
 
 
 def get_remote_tools(organization="huggingface-tools"):
+    if is_offline_mode():
+        logger.info("You are in offline mode, so remote tools are not available.")
+        return {}
+
     spaces = list_spaces(author=organization)
     tools = {}
     for space_info in spaces:
@@ -105,16 +109,17 @@ def _setup_default_tools():
         description = tool_class.description
         HUGGINGFACE_DEFAULT_TOOLS[tool_class.name] = PreTool(task=task_name, description=description, repo_id=None)
 
-    for task_name in HUGGINGFACE_DEFAULT_TOOLS_FROM_HUB:
-        found = False
-        for tool_name, tool in remote_tools.items():
-            if tool.task == task_name:
-                HUGGINGFACE_DEFAULT_TOOLS[tool_name] = tool
-                found = True
-                break
+    if not is_offline_mode():
+        for task_name in HUGGINGFACE_DEFAULT_TOOLS_FROM_HUB:
+            found = False
+            for tool_name, tool in remote_tools.items():
+                if tool.task == task_name:
+                    HUGGINGFACE_DEFAULT_TOOLS[tool_name] = tool
+                    found = True
+                    break
 
-        if not found:
-            raise ValueError(f"{task_name} is not implemented on the Hub.")
+            if not found:
+                raise ValueError(f"{task_name} is not implemented on the Hub.")
 
     _tools_are_initialized = True
 
@@ -224,12 +229,12 @@ class Agent:
             self._toolbox.update(additional_tools)
             if len(replacements) > 1:
                 names = "\n".join([f"- {n}: {t}" for n, t in replacements.items()])
-                logger.warn(
+                logger.warning(
                     f"The following tools have been replaced by the ones provided in `additional_tools`:\n{names}."
                 )
             elif len(replacements) == 1:
                 name = list(replacements.keys())[0]
-                logger.warn(f"{name} has been replaced by {replacements[name]} as provided in `additional_tools`.")
+                logger.warning(f"{name} has been replaced by {replacements[name]} as provided in `additional_tools`.")
 
         self.prepare_for_new_chat()
 
@@ -310,6 +315,13 @@ class Agent:
         self.chat_state = {}
         self.cached_tools = None
 
+    def clean_code_for_run(self, result):
+        """
+        Override this method if you want to change the way the code is
+        cleaned for the `run` method.
+        """
+        return clean_code_for_run(result)
+
     def run(self, task, *, return_code=False, remote=False, **kwargs):
         """
         Sends a request to the agent.
@@ -334,7 +346,7 @@ class Agent:
         """
         prompt = self.format_prompt(task)
         result = self.generate_one(prompt, stop=["Task:"])
-        explanation, code = clean_code_for_run(result)
+        explanation, code = self.clean_code_for_run(result)
 
         self.log(f"==Explanation from the agent==\n{explanation}")
 
@@ -435,13 +447,13 @@ class OpenAiAgent(Agent):
             return self._completion_generate([prompt], stop)[0]
 
     def _chat_generate(self, prompt, stop):
-        result = openai.ChatCompletion.create(
+        result = openai.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             stop=stop,
         )
-        return result["choices"][0]["message"]["content"]
+        return result.choices[0].message.content
 
     def _completion_generate(self, prompts, stop):
         result = openai.Completion.create(

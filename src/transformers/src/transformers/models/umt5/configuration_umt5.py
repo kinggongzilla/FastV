@@ -22,11 +22,6 @@ from ...utils import logging
 
 logger = logging.get_logger(__name__)
 
-UMT5_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "google/umt5-small": "https://huggingface.co/google/umt5-small/resolve/main/config.json",
-    # See all umt5 models at https://huggingface.co/models?filter=umt5
-}
-
 
 class UMT5Config(PretrainedConfig):
     r"""
@@ -61,6 +56,8 @@ class UMT5Config(PretrainedConfig):
             The maximum distance of the longer sequences for the bucket separation.
         dropout_rate (`float`, *optional*, defaults to 0.1):
             The ratio for all dropout layers.
+        classifier_dropout (`float`, *optional*, defaults to 0.0):
+            The dropout ratio for classifier.
         layer_norm_eps (`float`, *optional*, defaults to 1e-6):
             The epsilon used by the layer normalization layers.
         initializer_factor (`float`, *optional*, defaults to 1):
@@ -71,8 +68,10 @@ class UMT5Config(PretrainedConfig):
         use_cache (`bool`, *optional*, defaults to `True`):
             Whether or not the model should return the last key/values attentions (not used by all models).
     """
+
     model_type = "umt5"
     keys_to_ignore_at_inference = ["past_key_values"]
+    attribute_map = {"hidden_size": "d_model", "num_attention_heads": "num_heads", "num_hidden_layers": "num_layers"}
 
     def __init__(
         self,
@@ -96,17 +95,9 @@ class UMT5Config(PretrainedConfig):
         pad_token_id=0,
         eos_token_id=1,
         decoder_start_token_id=0,
+        classifier_dropout=0.0,
         **kwargs,
     ):
-        super().__init__(
-            is_encoder_decoder=is_encoder_decoder,
-            tokenizer_class=tokenizer_class,
-            tie_word_embeddings=tie_word_embeddings,
-            pad_token_id=pad_token_id,
-            eos_token_id=eos_token_id,
-            decoder_start_token_id=decoder_start_token_id,
-            **kwargs,
-        )
         self.vocab_size = vocab_size
         self.d_model = d_model
         self.d_kv = d_kv
@@ -119,6 +110,7 @@ class UMT5Config(PretrainedConfig):
         self.relative_attention_num_buckets = relative_attention_num_buckets
         self.relative_attention_max_distance = relative_attention_max_distance
         self.dropout_rate = dropout_rate
+        self.classifier_dropout = classifier_dropout
         self.layer_norm_epsilon = layer_norm_epsilon
         self.initializer_factor = initializer_factor
         self.feed_forward_proj = feed_forward_proj
@@ -130,7 +122,7 @@ class UMT5Config(PretrainedConfig):
 
         if len(act_info) > 1 and act_info[0] != "gated" or len(act_info) > 2:
             raise ValueError(
-                f"`feed_forward_proj`: {feed_forward_proj} is not a valid activation function of the dense layer."
+                f"`feed_forward_proj`: {feed_forward_proj} is not a valid activation function of the dense layer. "
                 "Please make sure `feed_forward_proj` is of the format `gated-{ACT_FN}` or `{ACT_FN}`, e.g. "
                 "'gated-gelu' or 'relu'"
             )
@@ -138,17 +130,15 @@ class UMT5Config(PretrainedConfig):
         if feed_forward_proj == "gated-gelu":
             self.dense_act_fn = "gelu_new"
 
-    @property
-    def hidden_size(self):
-        return self.d_model
-
-    @property
-    def num_attention_heads(self):
-        return self.num_heads
-
-    @property
-    def num_hidden_layers(self):
-        return self.num_layers
+        super().__init__(
+            is_encoder_decoder=is_encoder_decoder,
+            tokenizer_class=tokenizer_class,
+            tie_word_embeddings=tie_word_embeddings,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            decoder_start_token_id=decoder_start_token_id,
+            **kwargs,
+        )
 
 
 class UMT5OnnxConfig(OnnxSeq2SeqConfigWithPast):

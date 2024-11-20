@@ -46,14 +46,12 @@ _CONFIG_FOR_DOC = "GLPNConfig"
 _CHECKPOINT_FOR_DOC = "vinvino02/glpn-kitti"
 _EXPECTED_OUTPUT_SHAPE = [1, 512, 15, 20]
 
-GLPN_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "vinvino02/glpn-kitti",
-    # See all GLPN models at https://huggingface.co/models?filter=glpn
-]
+
+from ..deprecated._archive_maps import GLPN_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
-# Copied from transformers.models.segformer.modeling_segformer.drop_path
-def drop_path(input, drop_prob: float = 0.0, training: bool = False):
+# Copied from transformers.models.beit.modeling_beit.drop_path
+def drop_path(input: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
     """
     Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 

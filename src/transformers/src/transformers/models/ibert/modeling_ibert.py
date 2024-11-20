@@ -47,11 +47,8 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "kssteven/ibert-roberta-base"
 _CONFIG_FOR_DOC = "IBertConfig"
 
-IBERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "kssteven/ibert-roberta-base",
-    "kssteven/ibert-roberta-large",
-    "kssteven/ibert-roberta-large-mnli",
-]
+
+from ..deprecated._archive_maps import IBERT_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 class IBertEmbeddings(nn.Module):
@@ -796,6 +793,7 @@ class IBertModel(IBertPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]

@@ -29,18 +29,6 @@ VOCAB_FILES_NAMES = {
     "merges_file": "merges.txt",
 }
 
-PRETRAINED_VOCAB_FILES_MAP = {
-    "vocab_file": {
-        "allegro/herbert-base-cased": "https://huggingface.co/allegro/herbert-base-cased/resolve/main/vocab.json"
-    },
-    "merges_file": {
-        "allegro/herbert-base-cased": "https://huggingface.co/allegro/herbert-base-cased/resolve/main/merges.txt"
-    },
-}
-
-PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {"allegro/herbert-base-cased": 514}
-PRETRAINED_INIT_CONFIGURATION = {}
-
 
 # Copied from transformers.models.xlm.tokenization_xlm.get_pairs
 def get_pairs(word):
@@ -302,9 +290,6 @@ class HerbertTokenizer(PreTrainedTokenizer):
     """
 
     vocab_files_names = VOCAB_FILES_NAMES
-    pretrained_vocab_files_map = PRETRAINED_VOCAB_FILES_MAP
-    pretrained_init_configuration = PRETRAINED_INIT_CONFIGURATION
-    max_model_input_sizes = PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES
 
     def __init__(
         self,
@@ -334,21 +319,6 @@ class HerbertTokenizer(PreTrainedTokenizer):
         id2lang=None,
         **kwargs,
     ):
-        super().__init__(
-            unk_token=unk_token,
-            bos_token=bos_token,
-            sep_token=sep_token,
-            pad_token=pad_token,
-            cls_token=cls_token,
-            mask_token=mask_token,
-            additional_special_tokens=additional_special_tokens,
-            lang2id=lang2id,
-            id2lang=id2lang,
-            do_lowercase_and_remove_accent=do_lowercase_and_remove_accent,
-            tokenizer_file=None,
-            **kwargs,
-        )
-
         try:
             import sacremoses
         except ImportError:
@@ -382,6 +352,21 @@ class HerbertTokenizer(PreTrainedTokenizer):
         merges = [tuple(merge.split()[:2]) for merge in merges]
         self.bpe_ranks = dict(zip(merges, range(len(merges))))
         self.cache = {}
+
+        super().__init__(
+            unk_token=unk_token,
+            bos_token=bos_token,
+            sep_token=sep_token,
+            pad_token=pad_token,
+            cls_token=cls_token,
+            mask_token=mask_token,
+            additional_special_tokens=additional_special_tokens,
+            lang2id=lang2id,
+            id2lang=id2lang,
+            do_lowercase_and_remove_accent=do_lowercase_and_remove_accent,
+            tokenizer_file=None,
+            **kwargs,
+        )
 
         self.bert_pre_tokenizer = BasicTokenizer(
             do_lower_case=False,

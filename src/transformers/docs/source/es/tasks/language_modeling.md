@@ -26,11 +26,11 @@ El modelado de lenguaje causal predice el siguiente token en una secuencia de to
 
 El modelado de lenguaje por enmascaramiento predice un token enmascarado en una secuencia, y el modelo puede considerar los tokens bidireccionalmente.
 
-Esta guía te mostrará cómo realizar fine-tuning [DistilGPT2](https://huggingface.co/distilgpt2) para modelos de lenguaje causales y [DistilRoBERTa](https://huggingface.co/distilroberta-base) para modelos de lenguaje por enmascaramiento en el [r/askscience](https://www.reddit.com/r/askscience/) subdataset [ELI5](https://huggingface.co/datasets/eli5). 
+Esta guía te mostrará cómo realizar fine-tuning [DistilGPT2](https://huggingface.co/distilbert/distilgpt2) para modelos de lenguaje causales y [DistilRoBERTa](https://huggingface.co/distilbert/distilroberta-base) para modelos de lenguaje por enmascaramiento en el [r/askscience](https://www.reddit.com/r/askscience/) subdataset [ELI5](https://huggingface.co/datasets/eli5). 
 
 <Tip>
 
-Puedes realizar fine-tuning a otras arquitecturas para modelos de lenguaje como [GPT-Neo](https://huggingface.co/EleutherAI/gpt-neo-125M), [GPT-J](https://huggingface.co/EleutherAI/gpt-j-6B) y [BERT](https://huggingface.co/bert-base-uncased) siguiendo los mismos pasos presentados en esta guía!
+Puedes realizar fine-tuning a otras arquitecturas para modelos de lenguaje como [GPT-Neo](https://huggingface.co/EleutherAI/gpt-neo-125M), [GPT-J](https://huggingface.co/EleutherAI/gpt-j-6B) y [BERT](https://huggingface.co/google-bert/bert-base-uncased) siguiendo los mismos pasos presentados en esta guía!
 
 Mira la [página de tarea](https://huggingface.co/tasks/text-generation) para generación de texto y la [página de tarea](https://huggingface.co/tasks/fill-mask) para modelos de lenguajes por enmascaramiento para obtener más información sobre los modelos, datasets, y métricas asociadas.
 
@@ -81,7 +81,7 @@ Para modelados de lenguaje causales carga el tokenizador DistilGPT2 para procesa
 ```py
 >>> from transformers import AutoTokenizer
 
->>> tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
+>>> tokenizer = AutoTokenizer.from_pretrained("distilbert/distilgpt2")
 ```
 
 <Youtube id="8PmhEIXhBvI"/>
@@ -91,10 +91,10 @@ Para modelados de lenguaje por enmascaramiento carga el tokenizador DistilRoBERT
 ```py
 >>> from transformers import AutoTokenizer
 
->>> tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
+>>> tokenizer = AutoTokenizer.from_pretrained("distilbert/distilroberta-base")
 ```
 
-Extrae el subcampo `text` desde su estructura anidado con el método [`flatten`](https://huggingface.co/docs/datasets/process.html#flatten):
+Extrae el subcampo `text` desde su estructura anidado con el método [`flatten`](https://huggingface.co/docs/datasets/process#flatten):
 
 ```py
 >>> eli5 = eli5.flatten()
@@ -122,7 +122,7 @@ Así es como puedes crear una función de preprocesamiento para convertir la lis
 ...     return tokenizer([" ".join(x) for x in examples["answers.text"]], truncation=True)
 ```
 
-Usa de 🤗 Datasets la función [`map`](https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map) para aplicar la función de preprocesamiento sobre el dataset en su totalidad. Puedes acelerar la función `map` configurando el argumento `batched=True` para procesar múltiples elementos del dataset a la vez y aumentar la cantidad de procesos con `num_proc`. Elimina las columnas que no necesitas:
+Usa de 🤗 Datasets la función [`map`](https://huggingface.co/docs/datasets/process#map) para aplicar la función de preprocesamiento sobre el dataset en su totalidad. Puedes acelerar la función `map` configurando el argumento `batched=True` para procesar múltiples elementos del dataset a la vez y aumentar la cantidad de procesos con `num_proc`. Elimina las columnas que no necesitas:
 
 ```py
 >>> tokenized_eli5 = eli5.map(
@@ -203,7 +203,7 @@ Para modelados de lenguajes por enmascaramiento usa el mismo [`DataCollatorForLa
 
 ## Modelado de lenguaje causal
 
-El modelado de lenguaje causal es frecuentemente utilizado para generación de texto. Esta sección te muestra cómo realizar fine-tuning a [DistilGPT2](https://huggingface.co/distilgpt2) para generar nuevo texto.
+El modelado de lenguaje causal es frecuentemente utilizado para generación de texto. Esta sección te muestra cómo realizar fine-tuning a [DistilGPT2](https://huggingface.co/distilbert/distilgpt2) para generar nuevo texto.
 
 ### Entrenamiento
 
@@ -214,7 +214,7 @@ Carga DistilGPT2 con [`AutoModelForCausalLM`]:
 ```py
 >>> from transformers import AutoModelForCausalLM, TrainingArguments, Trainer
 
->>> model = AutoModelForCausalLM.from_pretrained("distilgpt2")
+>>> model = AutoModelForCausalLM.from_pretrained("distilbert/distilgpt2")
 ```
 
 <Tip>
@@ -249,7 +249,7 @@ A este punto, solo faltan tres pasos:
 ```
 </pt>
 <tf>
-Para realizar el fine-tuning de un modelo en TensorFlow, comienza por convertir tus datasets al formato `tf.data.Dataset` con [`to_tf_dataset`](https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.to_tf_dataset). Especifica los inputs y etiquetas en `columns`, ya sea para mezclar el dataset, tamaño de lote, y el data collator:
+Para realizar el fine-tuning de un modelo en TensorFlow, comienza por convertir tus datasets al formato `tf.data.Dataset` con [`to_tf_dataset`](https://huggingface.co/docs/datasets/package_reference/main_classes#datasets.Dataset.to_tf_dataset). Especifica los inputs y etiquetas en `columns`, ya sea para mezclar el dataset, tamaño de lote, y el data collator:
 
 ```py
 >>> tf_train_set = lm_dataset["train"].to_tf_dataset(
@@ -288,7 +288,7 @@ Carga DistilGPT2 con [`TFAutoModelForCausalLM`]:
 ```py
 >>> from transformers import TFAutoModelForCausalLM
 
->>> model = TFAutoModelForCausalLM.from_pretrained("distilgpt2")
+>>> model = TFAutoModelForCausalLM.from_pretrained("distilbert/distilgpt2")
 ```
 
 Configura el modelo para entrenamiento con [`compile`](https://keras.io/api/models/model_training_apis/#compile-method):
@@ -309,7 +309,7 @@ Llama a [`fit`](https://keras.io/api/models/model_training_apis/#fit-method) par
 
 ## Modelado de lenguaje por enmascaramiento
 
-El modelado de lenguaje por enmascaramiento es también conocido como una tarea de rellenar la máscara, pues predice un token enmascarado dada una secuencia. Los modelos de lenguaje por enmascaramiento requieren una buena comprensión del contexto de una secuencia entera, en lugar de solo el contexto a la izquierda. Esta sección te enseña como realizar el fine-tuning de [DistilRoBERTa](https://huggingface.co/distilroberta-base) para predecir una palabra enmascarada.
+El modelado de lenguaje por enmascaramiento es también conocido como una tarea de rellenar la máscara, pues predice un token enmascarado dada una secuencia. Los modelos de lenguaje por enmascaramiento requieren una buena comprensión del contexto de una secuencia entera, en lugar de solo el contexto a la izquierda. Esta sección te enseña como realizar el fine-tuning de [DistilRoBERTa](https://huggingface.co/distilbert/distilroberta-base) para predecir una palabra enmascarada.
 
 ### Entrenamiento
 
@@ -320,7 +320,7 @@ Carga DistilRoBERTa con [`AutoModelForMaskedlM`]:
 ```py
 >>> from transformers import AutoModelForMaskedLM
 
->>> model = AutoModelForMaskedLM.from_pretrained("distilroberta-base")
+>>> model = AutoModelForMaskedLM.from_pretrained("distilbert/distilroberta-base")
 ```
 
 <Tip>
@@ -356,7 +356,7 @@ A este punto, solo faltan tres pasos:
 ```
 </pt>
 <tf>
-Para realizar el fine-tuning de un modelo en TensorFlow, comienza por convertir tus datasets al formato `tf.data.Dataset` con [`to_tf_dataset`](https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.to_tf_dataset). Especifica los inputs y etiquetas en `columns`, ya sea para mezclar el dataset, tamaño de lote, y el data collator:
+Para realizar el fine-tuning de un modelo en TensorFlow, comienza por convertir tus datasets al formato `tf.data.Dataset` con [`to_tf_dataset`](https://huggingface.co/docs/datasets/package_reference/main_classes#datasets.Dataset.to_tf_dataset). Especifica los inputs y etiquetas en `columns`, ya sea para mezclar el dataset, tamaño de lote, y el data collator:
 
 ```py
 >>> tf_train_set = lm_dataset["train"].to_tf_dataset(
@@ -395,7 +395,7 @@ Carga DistilRoBERTa con [`TFAutoModelForMaskedLM`]:
 ```py
 >>> from transformers import TFAutoModelForMaskedLM
 
->>> model = TFAutoModelForCausalLM.from_pretrained("distilroberta-base")
+>>> model = TFAutoModelForCausalLM.from_pretrained("distilbert/distilroberta-base")
 ```
 
 Configura el modelo para entrenamiento con [`compile`](https://keras.io/api/models/model_training_apis/#compile-method):

@@ -15,7 +15,6 @@
 """ Testing suite for the PyTorch EfficientNet model. """
 
 
-import inspect
 import unittest
 
 from transformers import EfficientNetConfig
@@ -31,7 +30,6 @@ if is_torch_available():
     import torch
 
     from transformers import EfficientNetForImageClassification, EfficientNetModel
-    from transformers.models.efficientnet.modeling_efficientnet import EFFICIENTNET_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -49,7 +47,7 @@ class EfficientNetModelTester:
         num_channels=3,
         kernel_sizes=[3, 3, 5],
         in_channels=[32, 16, 24],
-        out_channels=[16, 24, 40],
+        out_channels=[16, 24, 20],
         strides=[1, 1, 2],
         num_block_repeats=[1, 1, 2],
         expand_ratios=[1, 6, 6],
@@ -131,7 +129,7 @@ class EfficientNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.Test
 
     all_model_classes = (EfficientNetModel, EfficientNetForImageClassification) if is_torch_available() else ()
     pipeline_model_mapping = (
-        {"feature-extraction": EfficientNetModel, "image-classification": EfficientNetForImageClassification}
+        {"image-feature-extraction": EfficientNetModel, "image-classification": EfficientNetForImageClassification}
         if is_torch_available()
         else {}
     )
@@ -172,18 +170,6 @@ class EfficientNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.Test
     def test_feed_forward_chunking(self):
         pass
 
-    def test_forward_signature(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            signature = inspect.signature(model.forward)
-            # signature.parameters is an OrderedDict => so arg_names order is deterministic
-            arg_names = [*signature.parameters.keys()]
-
-            expected_arg_names = ["pixel_values"]
-            self.assertListEqual(arg_names[:1], expected_arg_names)
-
     def test_model(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_model(*config_and_inputs)
@@ -223,15 +209,17 @@ class EfficientNetModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.Test
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_for_image_classification(*config_and_inputs)
 
-    @unittest.skip("Will be fixed soon by reducing the size of the model used for common tests.")
-    def test_model_is_small(self):
-        pass
-
     @slow
     def test_model_from_pretrained(self):
-        for model_name in EFFICIENTNET_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = EfficientNetModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "google/efficientnet-b7"
+        model = EfficientNetModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
+
+    @is_pipeline_test
+    @require_vision
+    @slow
+    def test_pipeline_image_feature_extraction(self):
+        super().test_pipeline_image_feature_extraction()
 
     @is_pipeline_test
     @require_vision
@@ -269,5 +257,5 @@ class EfficientNetModelIntegrationTest(unittest.TestCase):
         expected_shape = torch.Size((1, 1000))
         self.assertEqual(outputs.logits.shape, expected_shape)
 
-        expected_slice = torch.tensor([0.0001, 0.0002, 0.0002]).to(torch_device)
+        expected_slice = torch.tensor([-0.2962, 0.4487, 0.4499]).to(torch_device)
         self.assertTrue(torch.allclose(outputs.logits[0, :3], expected_slice, atol=1e-4))

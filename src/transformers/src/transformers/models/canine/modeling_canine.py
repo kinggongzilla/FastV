@@ -52,11 +52,9 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "google/canine-s"
 _CONFIG_FOR_DOC = "CanineConfig"
 
-CANINE_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "google/canine-s",
-    "google/canine-r"
-    # See all CANINE models at https://huggingface.co/models?filter=canine
-]
+
+from ..deprecated._archive_maps import CANINE_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
+
 
 # Support up to 16 hash functions.
 _PRIMES = [31, 43, 59, 61, 73, 97, 103, 113, 137, 149, 157, 173, 181, 193, 211, 223]
@@ -610,7 +608,7 @@ class CanineAttention(nn.Module):
                 chunk_end = min(from_seq_length, chunk_start + self.attend_from_chunk_width)
                 from_chunks.append((chunk_start, chunk_end))
 
-            # Determine the chunks (windows) that will will attend *to*.
+            # Determine the chunks (windows) that will attend *to*.
             to_chunks = []
             if self.first_position_attends_to_all:
                 to_chunks.append((0, to_seq_length))
@@ -795,18 +793,12 @@ class CanineEncoder(nn.Module):
             layer_head_mask = head_mask[i] if head_mask is not None else None
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
+                layer_outputs = self._gradient_checkpointing_func(
+                    layer_module.__call__,
                     hidden_states,
                     attention_mask,
                     layer_head_mask,
+                    output_attentions,
                 )
             else:
                 layer_outputs = layer_module(hidden_states, attention_mask, layer_head_mask, output_attentions)
@@ -918,10 +910,6 @@ class CaninePreTrainedModel(PreTrainedModel):
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
-
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, CanineEncoder):
-            module.gradient_checkpointing = value
 
 
 CANINE_START_DOCSTRING = r"""
@@ -1126,6 +1114,7 @@ class CanineModel(CaninePreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
@@ -1168,7 +1157,9 @@ class CanineModel(CaninePreTrainedModel):
         # Contextualize character embeddings using shallow Transformer.
         # We use a 3D attention mask for the local attention.
         # `input_char_encoding`: shape (batch_size, char_seq_len, char_dim)
-        char_attention_mask = self._create_3d_attention_mask_from_input_mask(input_ids, attention_mask)
+        char_attention_mask = self._create_3d_attention_mask_from_input_mask(
+            input_ids if input_ids is not None else inputs_embeds, attention_mask
+        )
         init_chars_encoder_outputs = self.initial_char_encoder(
             input_char_embeddings,
             attention_mask=char_attention_mask,

@@ -50,10 +50,7 @@ _IMAGE_CLASS_CHECKPOINT = "snap-research/efficientformer-l1-300"
 _IMAGE_CLASS_EXPECTED_OUTPUT = "Egyptian cat"
 
 
-EFFICIENTFORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "snap-research/efficientformer-l1-300",
-    # See all EfficientFormer models at https://huggingface.co/models?filter=efficientformer
-]
+from ..deprecated._archive_maps import EFFICIENTFORMER_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 class EfficientFormerPatchEmbeddings(nn.Module):
@@ -246,7 +243,7 @@ class EfficientFormerConvMlp(nn.Module):
 
 
 # Copied from transformers.models.convnext.modeling_convnext.drop_path
-def drop_path(input, drop_prob: float = 0.0, training: bool = False):
+def drop_path(input: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
     """
     Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 

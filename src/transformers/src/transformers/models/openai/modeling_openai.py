@@ -43,13 +43,11 @@ from .configuration_openai import OpenAIGPTConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "openai-gpt"
+_CHECKPOINT_FOR_DOC = "openai-community/openai-gpt"
 _CONFIG_FOR_DOC = "OpenAIGPTConfig"
 
-OPENAI_GPT_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "openai-gpt",
-    # See all OpenAI GPT models at https://huggingface.co/models?filter=openai-gpt
-]
+
+from ..deprecated._archive_maps import OPENAI_GPT_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 def load_tf_weights_in_openai_gpt(model, config, openai_checkpoint_folder_path):
@@ -130,7 +128,7 @@ def load_tf_weights_in_openai_gpt(model, config, openai_checkpoint_folder_path):
     return model
 
 
-ACT_FNS = {"relu": nn.ReLU, "silu": silu, "gelu": gelu_new, "swish": silu}
+ACT_FNS = {"relu": nn.ReLU(), "silu": silu, "gelu": gelu_new, "swish": silu}
 
 
 class Attention(nn.Module):
@@ -452,6 +450,7 @@ class OpenAIGPTModel(OpenAIGPTPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
         elif inputs_embeds is not None:
@@ -677,8 +676,8 @@ class OpenAIGPTDoubleHeadsModel(OpenAIGPTPreTrainedModel):
         >>> from transformers import AutoTokenizer, OpenAIGPTDoubleHeadsModel
         >>> import torch
 
-        >>> tokenizer = AutoTokenizer.from_pretrained("openai-gpt")
-        >>> model = OpenAIGPTDoubleHeadsModel.from_pretrained("openai-gpt")
+        >>> tokenizer = AutoTokenizer.from_pretrained("openai-community/openai-gpt")
+        >>> model = OpenAIGPTDoubleHeadsModel.from_pretrained("openai-community/openai-gpt")
         >>> tokenizer.add_special_tokens(
         ...     {"cls_token": "[CLS]"}
         ... )  # Add a [CLS] to the vocabulary (we should train it also!)
@@ -813,7 +812,10 @@ class OpenAIGPTForSequenceClassification(OpenAIGPTPreTrainedModel):
             sequence_lengths = -1
         else:
             if input_ids is not None:
-                sequence_lengths = torch.ne(input_ids, self.config.pad_token_id).sum(-1) - 1
+                # if no pad token found, use modulo instead of reverse indexing for ONNX compatibility
+                sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
+                sequence_lengths = sequence_lengths % input_ids.shape[-1]
+                sequence_lengths = sequence_lengths.to(logits.device)
             else:
                 sequence_lengths = -1
                 logger.warning(

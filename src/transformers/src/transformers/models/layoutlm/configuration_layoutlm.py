@@ -23,14 +23,8 @@ from ...utils import TensorType, is_torch_available, logging
 
 logger = logging.get_logger(__name__)
 
-LAYOUTLM_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "microsoft/layoutlm-base-uncased": (
-        "https://huggingface.co/microsoft/layoutlm-base-uncased/resolve/main/config.json"
-    ),
-    "microsoft/layoutlm-large-uncased": (
-        "https://huggingface.co/microsoft/layoutlm-large-uncased/resolve/main/config.json"
-    ),
-}
+
+from ..deprecated._archive_maps import LAYOUTLM_PRETRAINED_CONFIG_ARCHIVE_MAP  # noqa: F401, E402
 
 
 class LayoutLMConfig(PretrainedConfig):
@@ -83,8 +77,6 @@ class LayoutLMConfig(PretrainedConfig):
         use_cache (`bool`, *optional*, defaults to `True`):
             Whether or not the model should return the last key/values attentions (not used by all models). Only
             relevant if `config.is_decoder=True`.
-        classifier_dropout (`float`, *optional*):
-            The dropout ratio for the classification head.
         max_2d_position_embeddings (`int`, *optional*, defaults to 1024):
             The maximum value that the 2D position embedding might ever used. Typically set this to something large
             just in case (e.g., 1024).
@@ -103,6 +95,7 @@ class LayoutLMConfig(PretrainedConfig):
     >>> # Accessing the model configuration
     >>> configuration = model.config
     ```"""
+
     model_type = "layoutlm"
 
     def __init__(

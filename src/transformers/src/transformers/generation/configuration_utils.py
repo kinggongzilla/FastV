@@ -18,12 +18,13 @@ import copy
 import json
 import os
 import warnings
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from .. import __version__
 from ..configuration_utils import PretrainedConfig
 from ..utils import (
     GENERATION_CONFIG_NAME,
+    ExplicitEnum,
     PushToHubMixin,
     cached_file,
     download_url,
@@ -33,33 +34,64 @@ from ..utils import (
 )
 
 
+if TYPE_CHECKING:
+    from ..modeling_utils import PreTrainedModel
+
+
 logger = logging.get_logger(__name__)
+METADATA_FIELDS = ("_from_model_config", "_commit_hash", "_original_object_hash", "transformers_version")
+
+
+class GenerationMode(ExplicitEnum):
+    """
+    Possible generation modes, downstream of the [`~generation.GenerationMixin.generate`] method.
+    """
+
+    # Non-beam methods
+    CONTRASTIVE_SEARCH = "contrastive_search"
+    GREEDY_SEARCH = "greedy_search"
+    SAMPLE = "sample"
+    ASSISTED_GENERATION = "assisted_generation"
+    # Beam methods
+    BEAM_SEARCH = "beam_search"
+    BEAM_SAMPLE = "beam_sample"
+    CONSTRAINED_BEAM_SEARCH = "constrained_beam_search"
+    GROUP_BEAM_SEARCH = "group_beam_search"
 
 
 class GenerationConfig(PushToHubMixin):
+    # no-format
     r"""
     Class that holds a configuration for a generation task. A `generate` call supports the following generation methods
     for text-decoder, text-to-text, speech-to-text, and vision-to-text models:
 
-        - *greedy decoding* by calling [`~generation.GenerationMixin.greedy_search`] if `num_beams=1` and
+        - *greedy decoding* by calling [`~generation.GenerationMixin._greedy_search`] if `num_beams=1` and
             `do_sample=False`
-        - *contrastive search* by calling [`~generation.GenerationMixin.contrastive_search`] if `penalty_alpha>0.`
+        - *contrastive search* by calling [`~generation.GenerationMixin._contrastive_search`] if `penalty_alpha>0.`
             and `top_k>1`
-        - *multinomial sampling* by calling [`~generation.GenerationMixin.sample`] if `num_beams=1` and
+        - *multinomial sampling* by calling [`~generation.GenerationMixin._sample`] if `num_beams=1` and
             `do_sample=True`
-        - *beam-search decoding* by calling [`~generation.GenerationMixin.beam_search`] if `num_beams>1` and
+        - *beam-search decoding* by calling [`~generation.GenerationMixin._beam_search`] if `num_beams>1` and
             `do_sample=False`
-        - *beam-search multinomial sampling* by calling [`~generation.GenerationMixin.beam_sample`] if
+        - *beam-search multinomial sampling* by calling [`~generation.GenerationMixin._beam_sample`] if
             `num_beams>1` and `do_sample=True`
-        - *diverse beam-search decoding* by calling [`~generation.GenerationMixin.group_beam_search`], if
+        - *diverse beam-search decoding* by calling [`~generation.GenerationMixin._group_beam_search`], if
             `num_beams>1` and `num_beam_groups>1`
-        - *constrained beam-search decoding* by calling [`~generation.GenerationMixin.constrained_beam_search`], if
+        - *constrained beam-search decoding* by calling [`~generation.GenerationMixin._constrained_beam_search`], if
             `constraints!=None` or `force_words_ids!=None`
-        - *assisted decoding* by calling [`~generation.GenerationMixin.assisted_decoding`], if
-            `assistant_model` is passed to `.generate()`
+        - *assisted decoding* by calling [`~generation.GenerationMixin._assisted_decoding`], if
+            `assistant_model` or `prompt_lookup_num_tokens` is passed to `.generate()`
 
     You do not need to call any of the above methods directly. Pass custom parameter values to '.generate()'. To learn
     more about decoding strategies refer to the [text generation strategies guide](../generation_strategies).
+
+    <Tip>
+
+    A large number of these flags control the logits or the stopping criteria of the generation. Make sure you check
+    the [generate-related classes](https://huggingface.co/docs/transformers/internal/generation_utils) for a full
+    description of the possible manipulations, as well as examples of their usage.
+
+    </Tip>
 
     Arg:
         > Parameters that control the length of the output
@@ -189,6 +221,10 @@ class GenerationConfig(PushToHubMixin):
             The guidance scale for classifier free guidance (CFG). CFG is enabled by setting `guidance_scale > 1`.
             Higher guidance scale encourages the model to generate samples that are more closely linked to the input
             prompt, usually at the expense of poorer quality.
+        low_memory (`bool`, *optional*):
+            Switch to sequential beam search and sequential topk for contrastive search to reduce peak memory.
+            Used with beam search and contrastive search.
+
 
         > Parameters that define the output variables of `generate`
 
@@ -202,6 +238,9 @@ class GenerationConfig(PushToHubMixin):
             more details.
         output_scores (`bool`, *optional*, defaults to `False`):
             Whether or not to return the prediction scores. See `scores` under returned tensors for more details.
+        output_logits (`bool`, *optional*):
+            Whether or not to return the unprocessed prediction logit scores. See `logits` under returned tensors for
+            more details.
         return_dict_in_generate (`bool`, *optional*, defaults to `False`):
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 
@@ -219,8 +258,38 @@ class GenerationConfig(PushToHubMixin):
         encoder_no_repeat_ngram_size (`int`, *optional*, defaults to 0):
             If set to int > 0, all ngrams of that size that occur in the `encoder_input_ids` cannot occur in the
             `decoder_input_ids`.
-        decoder_start_token_id (`int`, *optional*):
-            If an encoder-decoder model starts decoding with a different token than *bos*, the id of that token.
+        decoder_start_token_id (`Union[int, List[int]]`, *optional*):
+            If an encoder-decoder model starts decoding with a different token than *bos*, the id of that token or a list of length
+            `batch_size`. Indicating a list enables different start ids for each element in the batch
+            (e.g. multilingual models with different target languages in one batch)
+
+
+        > Generation parameters exclusive to [assistant generation](https://arxiv.org/abs/2211.17192)
+
+        num_assistant_tokens (`int`, *optional*, defaults to 5):
+            Defines the number of _speculative tokens_ that shall be generated by the assistant model before being
+            checked by the target model at each iteration. Higher values for `num_assistant_tokens` make the generation
+            more _speculative_ : If the assistant model is performant larger speed-ups can be reached, if the assistant
+            model requires lots of corrections, lower speed-ups are reached.
+
+        num_assistant_tokens_schedule (`str`, *optional*, defaults to `"heuristic"`):
+            Defines the schedule at which max assistant tokens shall be changed during inference.
+            - `"heuristic"`: When all speculative tokens are correct, increase `num_assistant_tokens` by 2 else
+              reduce by 1. `num_assistant_tokens` value is persistent over multiple generation calls with the same assistant model.
+            - `"heuristic_transient"`: Same as `"heuristic"` but `num_assistant_tokens` is reset to its initial value after each generation call.
+            - `"constant"`: `num_assistant_tokens` stays unchanged during generation
+
+        prompt_lookup_num_tokens (`int`, *optional*, default to `None`):
+            The number of tokens to be output as candidate tokens.
+
+        max_matching_ngram_size (`int`, *optional*, default to `None`):
+            The maximum ngram size to be considered for matching in the prompt. Default to 2 if not provided.
+
+        > Parameters specific to the caching mechanism:
+
+        cache_implementation (`str`, *optional*, default to `None`):
+            Cache class that should be used when generating.
+
 
         > Wild card
 
@@ -270,12 +339,14 @@ class GenerationConfig(PushToHubMixin):
         self.forced_decoder_ids = kwargs.pop("forced_decoder_ids", None)
         self.sequence_bias = kwargs.pop("sequence_bias", None)
         self.guidance_scale = kwargs.pop("guidance_scale", None)
+        self.low_memory = kwargs.pop("low_memory", None)
 
         # Parameters that define the output variables of `generate`
         self.num_return_sequences = kwargs.pop("num_return_sequences", 1)
         self.output_attentions = kwargs.pop("output_attentions", False)
         self.output_hidden_states = kwargs.pop("output_hidden_states", False)
         self.output_scores = kwargs.pop("output_scores", False)
+        self.output_logits = kwargs.pop("output_logits", None)
         self.return_dict_in_generate = kwargs.pop("return_dict_in_generate", False)
 
         # Special tokens that can be used at generation time
@@ -287,10 +358,21 @@ class GenerationConfig(PushToHubMixin):
         self.encoder_no_repeat_ngram_size = kwargs.pop("encoder_no_repeat_ngram_size", 0)
         self.decoder_start_token_id = kwargs.pop("decoder_start_token_id", None)
 
+        # Assistant generation
+        self.num_assistant_tokens = kwargs.pop("num_assistant_tokens", 5)
+        self.num_assistant_tokens_schedule = kwargs.pop("num_assistant_tokens_schedule", "heuristic")
+
+        # Cache implementation
+        self.cache_implementation = kwargs.pop("cache_implementation", None)
+
+        # Prompt lookup decoding
+        self.prompt_lookup_num_tokens = kwargs.pop("prompt_lookup_num_tokens", None)
+        self.max_matching_ngram_size = kwargs.pop("max_matching_ngram_size", None)
+
         # Wild card
         self.generation_kwargs = kwargs.pop("generation_kwargs", {})
 
-        # The remaining attributes do not parametrize `.generate()`, but are informative and/or used by the the hub
+        # The remaining attributes do not parametrize `.generate()`, but are informative and/or used by the hub
         # interface.
         self._from_model_config = kwargs.pop("_from_model_config", False)
         self._commit_hash = kwargs.pop("_commit_hash", None)
@@ -308,30 +390,243 @@ class GenerationConfig(PushToHubMixin):
                     raise err
 
         # Validate the values of the attributes
-        self.validate()
+        self.validate(is_init=True)
+
+    def __hash__(self):
+        return hash(self.to_json_string(ignore_metadata=True))
 
     def __eq__(self, other):
         if not isinstance(other, GenerationConfig):
             return False
 
-        self_dict = self.__dict__.copy()
-        other_dict = other.__dict__.copy()
-        # ignore metadata
-        for metadata_field in ("_from_model_config", "_commit_hash", "transformers_version"):
-            self_dict.pop(metadata_field, None)
-            other_dict.pop(metadata_field, None)
-        return self_dict == other_dict
+        self_without_metadata = self.to_json_string(use_diff=False, ignore_metadata=True)
+        other_without_metadata = other.to_json_string(use_diff=False, ignore_metadata=True)
+        return self_without_metadata == other_without_metadata
 
     def __repr__(self):
-        return f"{self.__class__.__name__} {self.to_json_string()}"
+        return f"{self.__class__.__name__} {self.to_json_string(ignore_metadata=True)}"
 
-    def validate(self):
+    def get_generation_mode(self, assistant_model: Optional["PreTrainedModel"] = None) -> GenerationMode:
         """
-        Validates the values of the attributes of the GenerationConfig instance, and raises a `ValueError` if any of
-        the values are invalid.
+        Returns the generation mode triggered by the [`GenerationConfig`] instance.
+
+        Arg:
+            assistant_model (`PreTrainedModel`, *optional*):
+                The assistant model to be used for assisted generation. If set, the generation mode will be
+                assisted generation.
+
+        Returns:
+            `GenerationMode`: The generation mode triggered by the instance.
         """
+        # TODO joao: find out a way of not depending on external fields (e.g. `assistant_model`), then make this a
+        # property and part of the `__repr__`
+        if self.constraints is not None or self.force_words_ids is not None:
+            generation_mode = GenerationMode.CONSTRAINED_BEAM_SEARCH
+        elif self.num_beams == 1:
+            if self.do_sample is False:
+                if (
+                    self.top_k is not None
+                    and self.top_k > 1
+                    and self.penalty_alpha is not None
+                    and self.penalty_alpha > 0
+                ):
+                    generation_mode = GenerationMode.CONTRASTIVE_SEARCH
+                else:
+                    generation_mode = GenerationMode.GREEDY_SEARCH
+            else:
+                generation_mode = GenerationMode.SAMPLE
+        else:
+            if self.num_beam_groups > 1:
+                generation_mode = GenerationMode.GROUP_BEAM_SEARCH
+            elif self.do_sample is True:
+                generation_mode = GenerationMode.BEAM_SAMPLE
+            else:
+                generation_mode = GenerationMode.BEAM_SEARCH
+
+        # Assisted generation may extend some generation modes
+        if assistant_model is not None or self.prompt_lookup_num_tokens is not None:
+            if generation_mode in ("greedy_search", "sample"):
+                generation_mode = GenerationMode.ASSISTED_GENERATION
+            else:
+                raise ValueError(
+                    "You've set `assistant_model`, which triggers assisted generate. Currently, assisted generate "
+                    "is only supported with Greedy Search and Sample."
+                )
+        return generation_mode
+
+    def validate(self, is_init=False):
+        """
+        Validates the values of the attributes of the [`GenerationConfig`] instance. Raises exceptions in the presence
+        of parameterization that can be detected as incorrect from the configuration instance alone.
+
+        Note that some parameters not validated here are best validated at generate runtime, as they may depend on
+        other inputs and/or the model, such as parameters related to the generation length.
+
+        Arg:
+            is_init (`bool`, *optional*, defaults to `False`):
+                Whether the validation is performed during the initialization of the instance.
+        """
+
+        # Validation of individual attributes
         if self.early_stopping not in {True, False, "never"}:
             raise ValueError(f"`early_stopping` must be a boolean or 'never', but is {self.early_stopping}.")
+        if self.max_new_tokens is not None and self.max_new_tokens <= 0:
+            raise ValueError(f"`max_new_tokens` must be greater than 0, but is {self.max_new_tokens}.")
+
+        # Validation of attribute relations:
+        fix_location = ""
+        if is_init:
+            fix_location = (
+                " This was detected when initializing the generation config instance, which means the corresponding "
+                "file may hold incorrect parameterization and should be fixed."
+            )
+
+        # 1. detect sampling-only parameterization when not in sampling mode
+        if self.do_sample is False:
+            greedy_wrong_parameter_msg = (
+                "`do_sample` is set to `False`. However, `{flag_name}` is set to `{flag_value}` -- this flag is only "
+                "used in sample-based generation modes. You should set `do_sample=True` or unset `{flag_name}`."
+                + fix_location
+            )
+            if self.temperature is not None and self.temperature != 1.0:
+                warnings.warn(
+                    greedy_wrong_parameter_msg.format(flag_name="temperature", flag_value=self.temperature),
+                    UserWarning,
+                )
+            if self.top_p is not None and self.top_p != 1.0:
+                warnings.warn(
+                    greedy_wrong_parameter_msg.format(flag_name="top_p", flag_value=self.top_p),
+                    UserWarning,
+                )
+            if self.typical_p is not None and self.typical_p != 1.0:
+                warnings.warn(
+                    greedy_wrong_parameter_msg.format(flag_name="typical_p", flag_value=self.typical_p),
+                    UserWarning,
+                )
+            if (
+                self.top_k is not None and self.top_k != 50 and self.penalty_alpha is None
+            ):  # contrastive search uses top_k
+                warnings.warn(
+                    greedy_wrong_parameter_msg.format(flag_name="top_k", flag_value=self.top_k),
+                    UserWarning,
+                )
+            if self.epsilon_cutoff is not None and self.epsilon_cutoff != 0.0:
+                warnings.warn(
+                    greedy_wrong_parameter_msg.format(flag_name="epsilon_cutoff", flag_value=self.epsilon_cutoff),
+                    UserWarning,
+                )
+            if self.eta_cutoff is not None and self.eta_cutoff != 0.0:
+                warnings.warn(
+                    greedy_wrong_parameter_msg.format(flag_name="eta_cutoff", flag_value=self.eta_cutoff),
+                    UserWarning,
+                )
+
+        # 2. detect beam-only parameterization when not in beam mode
+        if self.num_beams is None:
+            warnings.warn("`num_beams` is set to None - defaulting to 1.", UserWarning)
+            self.num_beams = 1
+
+        if self.num_beams == 1:
+            single_beam_wrong_parameter_msg = (
+                "`num_beams` is set to 1. However, `{flag_name}` is set to `{flag_value}` -- this flag is only used "
+                "in beam-based generation modes. You should set `num_beams>1` or unset `{flag_name}`." + fix_location
+            )
+            if self.early_stopping is not False:
+                warnings.warn(
+                    single_beam_wrong_parameter_msg.format(flag_name="early_stopping", flag_value=self.early_stopping),
+                    UserWarning,
+                )
+            if self.num_beam_groups is not None and self.num_beam_groups != 1:
+                warnings.warn(
+                    single_beam_wrong_parameter_msg.format(
+                        flag_name="num_beam_groups", flag_value=self.num_beam_groups
+                    ),
+                    UserWarning,
+                )
+            if self.diversity_penalty is not None and self.diversity_penalty != 0.0:
+                warnings.warn(
+                    single_beam_wrong_parameter_msg.format(
+                        flag_name="diversity_penalty", flag_value=self.diversity_penalty
+                    ),
+                    UserWarning,
+                )
+            if self.length_penalty is not None and self.length_penalty != 1.0:
+                warnings.warn(
+                    single_beam_wrong_parameter_msg.format(flag_name="length_penalty", flag_value=self.length_penalty),
+                    UserWarning,
+                )
+            if self.constraints is not None:
+                warnings.warn(
+                    single_beam_wrong_parameter_msg.format(flag_name="constraints", flag_value=self.constraints),
+                    UserWarning,
+                )
+
+        # 3. detect incorrect paramaterization specific to advanced beam modes
+        else:
+            # constrained beam search
+            if self.constraints is not None or self.force_words_ids is not None:
+                constrained_wrong_parameter_msg = (
+                    "one of `constraints`, `force_words_ids` is not `None`, triggering constrained beam search. However, "
+                    "`{flag_name}` is set to `{flag_value}`, which is incompatible with this generation mode. Set "
+                    "`constraints` and `force_words_ids` to `None` or unset `{flag_name}` to continue." + fix_location
+                )
+                if self.do_sample is True:
+                    raise ValueError(
+                        constrained_wrong_parameter_msg.format(flag_name="do_sample", flag_value=self.do_sample)
+                    )
+                if self.num_beam_groups is not None and self.num_beam_groups != 1:
+                    raise ValueError(
+                        constrained_wrong_parameter_msg.format(
+                            flag_name="num_beam_groups", flag_value=self.num_beam_groups
+                        )
+                    )
+            # group beam search
+            if self.diversity_penalty != 0.0 or self.num_beam_groups != 1:
+                group_error_prefix = (
+                    "`diversity_penalty` is not 0.0 or `num_beam_groups` is not 1, triggering group beam search. In "
+                    "this generation mode, "
+                )
+                if self.do_sample is True:
+                    raise ValueError(group_error_prefix + "`do_sample` must be set to `False`")
+                if self.num_beams % self.num_beam_groups != 0:
+                    raise ValueError(group_error_prefix + "`num_beams` should be divisible by `num_beam_groups`")
+                if self.diversity_penalty == 0.0:
+                    raise ValueError(
+                        group_error_prefix
+                        + "`diversity_penalty` should be greater than `0.0`, otherwise your groups will be identical."
+                    )
+
+        # 4. check `num_return_sequences`
+        if self.num_return_sequences != 1:
+            if self.num_beams == 1:
+                if self.do_sample is False:
+                    raise ValueError(
+                        "Greedy methods without beam search do not support `num_return_sequences` different than 1 "
+                        f"(got {self.num_return_sequences})."
+                    )
+            elif self.num_return_sequences > self.num_beams:
+                raise ValueError(
+                    f"`num_return_sequences` ({self.num_return_sequences}) has to be smaller or equal to `num_beams` "
+                    f"({self.num_beams})."
+                )
+
+        # 5. check common issue: passing `generate` arguments inside the generation config
+        generate_arguments = (
+            "logits_processor",
+            "stopping_criteria",
+            "prefix_allowed_tokens_fn",
+            "synced_gpus",
+            "assistant_model",
+            "streamer",
+            "negative_prompt_ids",
+            "negative_prompt_attention_mask",
+        )
+        for arg in generate_arguments:
+            if hasattr(self, arg):
+                raise ValueError(
+                    f"Argument `{arg}` is not a valid argument of `GenerationConfig`. It should be passed to "
+                    "`generate()` (or a pipeline) directly."
+                )
 
     def save_pretrained(
         self,
@@ -356,6 +651,33 @@ class GenerationConfig(PushToHubMixin):
             kwargs (`Dict[str, Any]`, *optional*):
                 Additional key word arguments passed along to the [`~utils.PushToHubMixin.push_to_hub`] method.
         """
+
+        # At save time, validate the instance -- if any warning/exception is thrown, we refuse to save the instance.
+        # This strictness is enforced to prevent bad configurations from being saved and re-used.
+        try:
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                self.validate()
+            if len(caught_warnings) > 0:
+                raise ValueError(str([w.message for w in caught_warnings]))
+        except ValueError as exc:
+            raise ValueError(
+                "The generation config instance is invalid -- `.validate()` throws warnings and/or exceptions. "
+                "Fix these issues to save the configuration.\n\nThrown during validation:\n" + str(exc)
+            )
+
+        use_auth_token = kwargs.pop("use_auth_token", None)
+
+        if use_auth_token is not None:
+            warnings.warn(
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+                FutureWarning,
+            )
+            if kwargs.get("token", None) is not None:
+                raise ValueError(
+                    "`token` and `use_auth_token` are both specified. Please set only the argument `token`."
+                )
+            kwargs["token"] = use_auth_token
+
         config_file_name = config_file_name if config_file_name is not None else GENERATION_CONFIG_NAME
 
         if os.path.isfile(save_directory):
@@ -380,7 +702,7 @@ class GenerationConfig(PushToHubMixin):
                 repo_id,
                 files_timestamps,
                 commit_message=commit_message,
-                token=kwargs.get("use_auth_token"),
+                token=kwargs.get("token"),
             )
 
     @classmethod
@@ -403,8 +725,7 @@ class GenerationConfig(PushToHubMixin):
                 This can be either:
 
                 - a string, the *model id* of a pretrained model configuration hosted inside a model repo on
-                  huggingface.co. Valid model ids can be located at the root-level, like `bert-base-uncased`, or
-                  namespaced under a user or organization name, like `dbmdz/bert-base-german-cased`.
+                  huggingface.co.
                 - a path to a *directory* containing a configuration file saved using the
                   [`~GenerationConfig.save_pretrained`] method, e.g., `./my_model_directory/`.
             config_file_name (`str` or `os.PathLike`, *optional*, defaults to `"generation_config.json"`):
@@ -458,7 +779,7 @@ class GenerationConfig(PushToHubMixin):
         >>> from transformers import GenerationConfig
 
         >>> # Download configuration from huggingface.co and cache.
-        >>> generation_config = GenerationConfig.from_pretrained("gpt2")
+        >>> generation_config = GenerationConfig.from_pretrained("openai-community/gpt2")
 
         >>> # E.g. config was saved using *save_pretrained('./test/saved_model/')*
         >>> generation_config.save_pretrained("./test/saved_model/")
@@ -471,7 +792,7 @@ class GenerationConfig(PushToHubMixin):
         >>> # If you'd like to try a minor variation to an existing configuration, you can also pass generation
         >>> # arguments to `.from_pretrained()`. Be mindful that typos and unused arguments will be ignored
         >>> generation_config, unused_kwargs = GenerationConfig.from_pretrained(
-        ...     "gpt2", top_k=1, foo=False, return_unused_kwargs=True
+        ...     "openai-community/gpt2", top_k=1, foo=False, do_sample=True, return_unused_kwargs=True
         ... )
         >>> generation_config.top_k
         1
@@ -491,7 +812,8 @@ class GenerationConfig(PushToHubMixin):
 
         if use_auth_token is not None:
             warnings.warn(
-                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers. Please use `token` instead.",
+                FutureWarning,
             )
             if token is not None:
                 raise ValueError(
@@ -526,7 +848,7 @@ class GenerationConfig(PushToHubMixin):
                     proxies=proxies,
                     resume_download=resume_download,
                     local_files_only=local_files_only,
-                    use_auth_token=token,
+                    token=token,
                     user_agent=user_agent,
                     revision=revision,
                     subfolder=subfolder,
@@ -560,7 +882,14 @@ class GenerationConfig(PushToHubMixin):
         else:
             logger.info(f"loading configuration file {configuration_file} from cache at {resolved_config_file}")
 
-        return cls.from_dict(config_dict, **kwargs)
+        if kwargs.get("return_unused_kwargs") is True:
+            config, unused_kwargs = cls.from_dict(config_dict, **kwargs)
+            config._original_object_hash = hash(config)  # Hash to detect whether the instance was modified
+            return config, unused_kwargs
+        else:
+            config = cls.from_dict(config_dict, **kwargs)
+            config._original_object_hash = hash(config)  # Hash to detect whether the instance was modified
+            return config
 
     @classmethod
     def _dict_from_json_file(cls, json_file: Union[str, os.PathLike]):
@@ -645,8 +974,12 @@ class GenerationConfig(PushToHubMixin):
             `Dict[str, Any]`: Dictionary of all the attributes that make up this configuration instance.
         """
         output = copy.deepcopy(self.__dict__)
+
+        # Fields to ignore at serialization time
         if "_commit_hash" in output:
             del output["_commit_hash"]
+        if "_original_object_hash" in output:
+            del output["_original_object_hash"]
 
         # Transformers version when serializing this file
         output["transformers_version"] = __version__
@@ -654,7 +987,7 @@ class GenerationConfig(PushToHubMixin):
         self.dict_torch_dtype_to_str(output)
         return output
 
-    def to_json_string(self, use_diff: bool = True) -> str:
+    def to_json_string(self, use_diff: bool = True, ignore_metadata: bool = False) -> str:
         """
         Serializes this instance to a JSON string.
 
@@ -662,6 +995,8 @@ class GenerationConfig(PushToHubMixin):
             use_diff (`bool`, *optional*, defaults to `True`):
                 If set to `True`, only the difference between the config instance and the default `GenerationConfig()`
                 is serialized to JSON string.
+            ignore_metadata (`bool`, *optional*, defaults to `False`):
+                Whether to ignore the metadata fields present in the instance
 
         Returns:
             `str`: String containing all the attributes that make up this configuration instance in JSON format.
@@ -670,6 +1005,21 @@ class GenerationConfig(PushToHubMixin):
             config_dict = self.to_diff_dict()
         else:
             config_dict = self.to_dict()
+
+        if ignore_metadata:
+            for metadata_field in METADATA_FIELDS:
+                config_dict.pop(metadata_field, None)
+
+        def convert_keys_to_string(obj):
+            if isinstance(obj, dict):
+                return {str(key): convert_keys_to_string(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_keys_to_string(item) for item in obj]
+            else:
+                return obj
+
+        config_dict = convert_keys_to_string(config_dict)
+
         return json.dumps(config_dict, indent=2, sort_keys=True) + "\n"
 
     def to_json_file(self, json_file_path: Union[str, os.PathLike], use_diff: bool = True):
@@ -713,6 +1063,7 @@ class GenerationConfig(PushToHubMixin):
                     if attr in decoder_config and getattr(config, attr) == getattr(default_generation_config, attr):
                         setattr(config, attr, decoder_config[attr])
 
+        config._original_object_hash = hash(config)  # Hash to detect whether the instance was modified
         return config
 
     def update(self, **kwargs):
@@ -733,6 +1084,9 @@ class GenerationConfig(PushToHubMixin):
                 setattr(self, key, value)
                 to_remove.append(key)
 
-        # remove all the attributes that were updated, without modifying the input dict
+        # Confirm that the updated instance is still valid
+        self.validate()
+
+        # Remove all the attributes that were updated, without modifying the input dict
         unused_kwargs = {key: value for key, value in kwargs.items() if key not in to_remove}
         return unused_kwargs

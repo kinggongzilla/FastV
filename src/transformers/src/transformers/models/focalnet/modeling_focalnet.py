@@ -54,10 +54,7 @@ _IMAGE_CLASS_CHECKPOINT = "microsoft/focalnet-tiny"
 _IMAGE_CLASS_EXPECTED_OUTPUT = "tabby, tabby cat"
 
 
-FOCALNET_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "microsoft/focalnet-tiny",
-    # See all FocalNet models at https://huggingface.co/models?filter=focalnet
-]
+from ..deprecated._archive_maps import FOCALNET_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 @dataclass
@@ -286,7 +283,7 @@ class FocalNetPatchEmbeddings(nn.Module):
 
 
 # Copied from transformers.models.beit.modeling_beit.drop_path
-def drop_path(input, drop_prob=0.0, training=False, scale_by_keep=True):
+def drop_path(input: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
     """
     Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 
@@ -586,15 +583,8 @@ class FocalNetEncoder(nn.Module):
 
         for i, stage_module in enumerate(self.stages):
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs)
-
-                    return custom_forward
-
-                stage_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(stage_module),
+                stage_outputs = self._gradient_checkpointing_func(
+                    stage_module.__call__,
                     hidden_states,
                     input_dimensions,
                 )
@@ -658,10 +648,6 @@ class FocalNetPreTrainedModel(PreTrainedModel):
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
-
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, FocalNetEncoder):
-            module.gradient_checkpointing = value
 
 
 FOCALNET_START_DOCSTRING = r"""

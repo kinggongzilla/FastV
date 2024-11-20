@@ -51,10 +51,8 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "deepmind/language-perceiver"
 _CONFIG_FOR_DOC = "PerceiverConfig"
 
-PERCEIVER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "deepmind/language-perceiver",
-    # See all Perceiver models at https://huggingface.co/models?filter=perceiver
-]
+
+from ..deprecated._archive_maps import PERCEIVER_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 @dataclass
@@ -1830,7 +1828,7 @@ class PerceiverForMultimodalAutoencoding(PerceiverPreTrainedModel):
             # Autoencoding, don't pass inputs to the queries.
             concat_preprocessed_input=False,
             output_shape=config.output_shape,
-            output_num_channels=512,
+            output_num_channels=config.output_num_channels,
             use_query_residual=False,
             position_encoding_only=True,
             position_encoding_type="fourier",
@@ -1854,7 +1852,7 @@ class PerceiverForMultimodalAutoencoding(PerceiverPreTrainedModel):
                     # Autoencoding, don't pass inputs to the queries.
                     concat_preprocessed_input=False,
                     output_index_dims=(n_audio_samples // config.samples_per_patch,),
-                    output_num_channels=512,
+                    output_num_channels=config.output_num_channels,
                     use_query_residual=False,
                     position_encoding_only=True,
                     position_encoding_type="fourier",
@@ -1874,21 +1872,21 @@ class PerceiverForMultimodalAutoencoding(PerceiverPreTrainedModel):
                     position_encoding_only=True,
                     position_encoding_type="trainable",
                     trainable_position_encoding_kwargs={
-                        "num_channels": 1024,
+                        "num_channels": config._label_trainable_num_channels,
                         "index_dims": 1,
                     },
                 ),
             },
             num_outputs=None,
-            output_num_channels=512,
+            output_num_channels=config.output_num_channels,
             use_query_residual=False,
         )
 
         output_postprocessor = PerceiverMultimodalPostprocessor(
             modalities={
-                "audio": PerceiverAudioPostprocessor(config, in_channels=512),
-                "image": PerceiverProjectionPostprocessor(in_channels=512, out_channels=3),
-                "label": PerceiverClassificationPostprocessor(config, in_channels=512),
+                "audio": PerceiverAudioPostprocessor(config, in_channels=config.output_num_channels),
+                "image": PerceiverProjectionPostprocessor(in_channels=config.output_num_channels, out_channels=3),
+                "label": PerceiverClassificationPostprocessor(config, in_channels=config.output_num_channels),
             }
         )
 

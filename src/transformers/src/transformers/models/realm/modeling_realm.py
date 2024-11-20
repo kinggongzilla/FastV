@@ -42,17 +42,8 @@ _ENCODER_CHECKPOINT_FOR_DOC = "google/realm-cc-news-pretrained-encoder"
 _SCORER_CHECKPOINT_FOR_DOC = "google/realm-cc-news-pretrained-scorer"
 _CONFIG_FOR_DOC = "RealmConfig"
 
-REALM_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "google/realm-cc-news-pretrained-embedder",
-    "google/realm-cc-news-pretrained-encoder",
-    "google/realm-cc-news-pretrained-scorer",
-    "google/realm-cc-news-pretrained-openqa",
-    "google/realm-orqa-nq-openqa",
-    "google/realm-orqa-nq-reader",
-    "google/realm-orqa-wq-openqa",
-    "google/realm-orqa-wq-reader",
-    # See all REALM models at https://huggingface.co/models?filter=realm
-]
+
+from ..deprecated._archive_maps import REALM_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 def load_tf_weights_in_realm(model, config, tf_checkpoint_path):
@@ -586,20 +577,15 @@ class RealmEncoder(nn.Module):
             past_key_value = past_key_values[i] if past_key_values is not None else None
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
+                layer_outputs = self._gradient_checkpointing_func(
+                    layer_module.__call__,
                     hidden_states,
                     attention_mask,
                     layer_head_mask,
                     encoder_hidden_states,
                     encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
                 )
             else:
                 layer_outputs = layer_module(
@@ -1063,6 +1049,7 @@ class RealmBertModel(RealmPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]

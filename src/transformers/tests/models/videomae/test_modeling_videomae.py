@@ -16,7 +16,6 @@
 
 
 import copy
-import inspect
 import unittest
 
 import numpy as np
@@ -42,7 +41,6 @@ if is_torch_available():
         VideoMAEForVideoClassification,
         VideoMAEModel,
     )
-    from transformers.models.videomae.modeling_videomae import VIDEOMAE_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 if is_vision_available():
@@ -62,7 +60,7 @@ class VideoMAEModelTester:
         is_training=True,
         use_labels=True,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         num_attention_heads=4,
         intermediate_size=37,
         hidden_act="gelu",
@@ -130,6 +128,10 @@ class VideoMAEModelTester:
             attention_probs_dropout_prob=self.attention_probs_dropout_prob,
             is_decoder=False,
             initializer_range=self.initializer_range,
+            decoder_hidden_size=self.hidden_size,
+            decoder_intermediate_size=self.intermediate_size,
+            decoder_num_attention_heads=self.num_attention_heads,
+            decoder_num_hidden_layers=self.num_hidden_layers,
         )
 
     def create_and_check_model(self, config, pixel_values, labels):
@@ -224,18 +226,6 @@ class VideoMAEModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase
             x = model.get_output_embeddings()
             self.assertTrue(x is None or isinstance(x, nn.Linear))
 
-    def test_forward_signature(self):
-        config, _ = self.model_tester.prepare_config_and_inputs_for_common()
-
-        for model_class in self.all_model_classes:
-            model = model_class(config)
-            signature = inspect.signature(model.forward)
-            # signature.parameters is an OrderedDict => so arg_names order is deterministic
-            arg_names = [*signature.parameters.keys()]
-
-            expected_arg_names = ["pixel_values"]
-            self.assertListEqual(arg_names[:1], expected_arg_names)
-
     def test_model(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_model(*config_and_inputs)
@@ -246,9 +236,9 @@ class VideoMAEModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in VIDEOMAE_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = VideoMAEModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "MCG-NJU/videomae-base"
+        model = VideoMAEModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
     def test_attention_outputs(self):
         if not self.has_attentions:
@@ -343,10 +333,6 @@ class VideoMAEModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase
             config.output_hidden_states = True
 
             check_hidden_states_output(inputs_dict, config, model_class)
-
-    @unittest.skip("Will be fixed soon by reducing the size of the model used for common tests.")
-    def test_model_is_small(self):
-        pass
 
 
 # We will verify our results on a video of eating spaghetti

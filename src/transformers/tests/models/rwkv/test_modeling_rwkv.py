@@ -30,7 +30,6 @@ if is_torch_available():
     import torch
 
     from transformers import (
-        RWKV_PRETRAINED_MODEL_ARCHIVE_LIST,
         RwkvForCausalLM,
         RwkvModel,
     )
@@ -52,7 +51,7 @@ class RwkvModelTester:
         use_mc_token_ids=True,
         vocab_size=99,
         hidden_size=32,
-        num_hidden_layers=5,
+        num_hidden_layers=2,
         intermediate_size=37,
         hidden_act="gelu",
         hidden_dropout_prob=0.1,
@@ -419,9 +418,9 @@ class RwkvModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMixin
 
     @slow
     def test_model_from_pretrained(self):
-        for model_name in RWKV_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
-            model = RwkvModel.from_pretrained(model_name)
-            self.assertIsNotNone(model)
+        model_name = "RWKV/rwkv-4-169m-pile"
+        model = RwkvModel.from_pretrained(model_name)
+        self.assertIsNotNone(model)
 
 
 @unittest.skipIf(

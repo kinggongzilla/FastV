@@ -25,6 +25,7 @@ from ...test_tokenization_common import TokenizerTesterMixin, filter_roberta_det
 
 @require_tokenizers
 class TestTokenizationBart(TokenizerTesterMixin, unittest.TestCase):
+    from_pretrained_id = "facebook/bart-base"
     tokenizer_class = BartTokenizer
     rust_tokenizer_class = BartTokenizerFast
     test_rust_tokenizer = True
@@ -170,7 +171,6 @@ class TestTokenizationBart(TokenizerTesterMixin, unittest.TestCase):
                 tokens_r_str = tokenizer_r.convert_ids_to_tokens(tokens_r["input_ids"])
                 tokens_p_str = tokenizer_p.convert_ids_to_tokens(tokens_p["input_ids"])
 
-                # Rust correctly handles the space before the mask while python doesnt
                 self.assertSequenceEqual(tokens_p["input_ids"], [0, 250, 6, 50264, 3823, 487, 21992, 3645, 4, 2])
                 self.assertSequenceEqual(tokens_r["input_ids"], [0, 250, 6, 50264, 3823, 487, 21992, 3645, 4, 2])
 

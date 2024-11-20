@@ -100,10 +100,34 @@ def load_image(image_file):
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--model-path', type=str, required=True, default="llava-v1.5-13b")
-    parser.add_argument('--image-path', type=str, required=True, help='figs/example.jpg')
-    parser.add_argument('--prompt', type=str, required=True, help='discribe the image in detail')
-    parser.add_argument('--output-path', type=str, required=True, help='the path to save the output json file')
+    parser.add_argument(
+        '--model-path',
+        type=str,
+        required=False,
+        default="../llava-v1.5-7b",
+        help='Path to the pretrained model (default: "../llava-v1.5-7b")'
+    )
+    parser.add_argument(
+        '--image-path',
+        type=str,
+        required=False,
+        default="./src/LLaVA/images/llava_logo.png",
+        help='Path to the image to be processed (default: "./src/LLaVA/images/llava_logo.png")'
+    )
+    parser.add_argument(
+        '--prompt',
+        type=str,
+        required=False,
+        default="Describe the image in details.",
+        help='Prompt to describe the image (default: "Describe the image in details.")'
+    )
+    parser.add_argument(
+        '--output-path',
+        type=str,
+        required=False,
+        default="./output_example",
+        help='Path to save the output and attention maps (default: "./output_example")'
+    )
     pargs = parser.parse_args()
 
         # %%

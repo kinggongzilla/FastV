@@ -43,10 +43,8 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "LayoutLMConfig"
 _CHECKPOINT_FOR_DOC = "microsoft/layoutlm-base-uncased"
 
-LAYOUTLM_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "layoutlm-base-uncased",
-    "layoutlm-large-uncased",
-]
+
+from ..deprecated._archive_maps import LAYOUTLM_PRETRAINED_MODEL_ARCHIVE_LIST  # noqa: F401, E402
 
 
 LayoutLMLayerNorm = nn.LayerNorm
@@ -487,20 +485,15 @@ class LayoutLMEncoder(nn.Module):
             past_key_value = past_key_values[i] if past_key_values is not None else None
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
+                layer_outputs = self._gradient_checkpointing_func(
+                    layer_module.__call__,
                     hidden_states,
                     attention_mask,
                     layer_head_mask,
                     encoder_hidden_states,
                     encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
                 )
             else:
                 layer_outputs = layer_module(
@@ -618,7 +611,6 @@ class LayoutLMPreTrainedModel(PreTrainedModel):
     """
 
     config_class = LayoutLMConfig
-    pretrained_model_archive_map = LAYOUTLM_PRETRAINED_MODEL_ARCHIVE_LIST
     base_model_prefix = "layoutlm"
     supports_gradient_checkpointing = True
 
@@ -637,10 +629,6 @@ class LayoutLMPreTrainedModel(PreTrainedModel):
         elif isinstance(module, LayoutLMLayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
-
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, LayoutLMEncoder):
-            module.gradient_checkpointing = value
 
 
 LAYOUTLM_START_DOCSTRING = r"""
@@ -795,6 +783,7 @@ class LayoutLMModel(LayoutLMPreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
+            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
@@ -890,8 +879,8 @@ class LayoutLMForMaskedLM(LayoutLMPreTrainedModel):
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
