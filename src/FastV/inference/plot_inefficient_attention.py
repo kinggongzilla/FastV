@@ -104,7 +104,7 @@ if __name__=="__main__":
         '--model-path',
         type=str,
         required=False,
-        default="../llava-v1.5-7b",
+        default="../llama3-llava-next-8b",
         help='Path to the pretrained model (default: "../llava-v1.5-7b")'
     )
     parser.add_argument(
@@ -148,7 +148,7 @@ if __name__=="__main__":
     # %%
     disable_torch_init()
     model_name = get_model_name_from_path(args.model_path)
-    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit, device=args.device)
+    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit)
 
     if 'llama-2' in model_name.lower():
         conv_mode = "llava_llama_2"
@@ -156,6 +156,8 @@ if __name__=="__main__":
         conv_mode = "llava_v1"
     elif "mpt" in model_name.lower():
         conv_mode = "mpt"
+    elif "llama3" in model_name.lower():
+        conv_mode = "llava_llama_3"
     else:
         conv_mode = "llava_v0"
 
@@ -184,6 +186,7 @@ if __name__=="__main__":
             image = load_image(image)
             image_tensor = process_images([image], image_processor, args)
             conv = conv_templates[args.conv_mode].copy()
+            conv.tokenizer = tokenizer
             if type(image_tensor) is list:
                 image_tensor = [image.to(model.device, dtype=torch.float16) for image in image_tensor]
             else:
@@ -209,12 +212,12 @@ if __name__=="__main__":
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             keywords = [stop_str]
             stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
-
+            attention_mask = None
             with torch.inference_mode():
                 output_ids = model.generate(
                     input_ids,
                     images=image_tensor,
-                    attention_mask=None,
+                    attention_mask=attention_mask,
                     do_sample=False,
                     max_new_tokens=256,
                     use_cache=True,

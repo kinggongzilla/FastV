@@ -60,6 +60,38 @@ logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
 
+# Copied from transformers.models.bart.modeling_bart._make_causal_mask
+def _make_causal_mask(
+    input_ids_shape: torch.Size, dtype: torch.dtype, device: torch.device, past_key_values_length: int = 0
+):
+    """
+    Make causal mask used for bi-directional self-attention.
+    """
+    bsz, tgt_len = input_ids_shape
+    mask = torch.full((tgt_len, tgt_len), torch.finfo(dtype).min, device=device)
+    mask_cond = torch.arange(mask.size(-1), device=device)
+    mask.masked_fill_(mask_cond < (mask_cond + 1).view(mask.size(-1), 1), 0)
+    mask = mask.to(dtype)
+
+    if past_key_values_length > 0:
+        mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
+    return mask[None, None, :, :].expand(bsz, 1, tgt_len, tgt_len + past_key_values_length)
+
+
+# Copied from transformers.models.bart.modeling_bart._expand_mask
+def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
+    """
+    Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
+    """
+    bsz, src_len = mask.size()
+    tgt_len = tgt_len if tgt_len is not None else src_len
+
+    expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+
+    inverted_mask = 1.0 - expanded_mask
+
+    return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
+
 
 def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
@@ -697,7 +729,9 @@ class LlamaDecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
 
+        # TODO: switch back again
         self.self_attn = LLAMA_ATTENTION_CLASSES[config._attn_implementation](config=config, layer_idx=layer_idx)
+        # self.self_attn = LLAMA_ATTENTION_CLASSES["sdpa"](config=config, layer_idx=layer_idx)
 
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -932,11 +966,52 @@ class LlamaModel(LlamaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+        self.config = config
+
+        self.use_fast_v = config.use_fast_v
+        self.fast_v_sys_length = config.fast_v_sys_length
+        self.fast_v_image_token_length = config.fast_v_image_token_length
+        self.fast_v_attention_rank = config.fast_v_attention_rank
+        self.fast_v_agg_layer = config.fast_v_agg_layer
+        self.fast_v_inplace = config.fast_v_inplace
+
+    def reset_fastv(self):
+        self.use_fast_v = self.config.use_fast_v
+        self.fast_v_sys_length = self.config.fast_v_sys_length
+        self.fast_v_image_token_length = self.config.fast_v_image_token_length
+        self.fast_v_attention_rank = self.config.fast_v_attention_rank
+        self.fast_v_agg_layer = self.config.fast_v_agg_layer
+        self.fast_v_inplace = self.config.fast_v_inplace
+
     def get_input_embeddings(self):
         return self.embed_tokens
 
     def set_input_embeddings(self, value):
         self.embed_tokens = value
+
+    # Copied from transformers.models.bart.modeling_bart.BartDecoder._prepare_decoder_attention_mask
+    def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
+        # create causal mask
+        # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+        combined_attention_mask = None
+        if input_shape[-1] > 1:
+            combined_attention_mask = _make_causal_mask(
+                input_shape,
+                inputs_embeds.dtype,
+                device=inputs_embeds.device,
+                past_key_values_length=past_key_values_length,
+            )
+
+        if attention_mask is not None:
+            # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+            expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
+                inputs_embeds.device
+            )
+            combined_attention_mask = (
+                expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
+            )
+
+        return combined_attention_mask
 
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     def forward(
@@ -952,6 +1027,9 @@ class LlamaModel(LlamaPreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
+        device = 'cuda'
+        batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]
+        
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -973,11 +1051,14 @@ class LlamaModel(LlamaPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        seq_length = inputs_embeds.shape[1]
         past_seen_tokens = 0
+        seq_length_with_past = seq_length
         if use_cache:  # kept for BC (cache positions)
             if not isinstance(past_key_values, StaticCache):
                 past_key_values = DynamicCache.from_legacy_cache(past_key_values)
                 past_seen_tokens = past_key_values.get_seq_length()
+                seq_length_with_past = seq_length + past_seen_tokens
 
         if cache_position is None:
             if isinstance(past_key_values, StaticCache):
@@ -999,7 +1080,7 @@ class LlamaModel(LlamaPreTrainedModel):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
 
-        for decoder_layer in self.layers:
+        for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1015,6 +1096,97 @@ class LlamaModel(LlamaPreTrainedModel):
                     cache_position,
                 )
             else:
+                USE_FAST_V = self.use_fast_v
+                SYS_LENGTH= self.fast_v_sys_length
+                IMAGE_TOKEN_LENGTH = self.fast_v_image_token_length
+                ATTENTION_RANK = self.fast_v_attention_rank
+                AGG_LAYER = self.fast_v_agg_layer
+                FASTV_INPLACE = self.fast_v_inplace
+                
+                if AGG_LAYER:
+                    assert AGG_LAYER > 0 , "K should be larger than 0"
+
+                # FastV Token Rerank, Token Drop Implementation, KV-Cache not supported
+                if USE_FAST_V and FASTV_INPLACE:
+                    #print("using inplace")
+
+                    if idx<AGG_LAYER:
+                        new_attention_mask = attention_mask
+
+                    elif idx==AGG_LAYER:
+                        # compute pruned tokens, generate fastv sign
+                        last_layer_attention = layer_outputs[1]
+                        # compute average attention over different head
+                        last_layer_attention_avg = torch.mean(last_layer_attention, dim=1)[0]
+                        # generate new attention mask based on the average attention, sample the top ATTENTION_RANK tokens with highest attention
+                        last_layer_attention_avg_last_tok = last_layer_attention_avg[-1]
+                        # get the attention in image token
+                        last_layer_attention_avg_last_tok_image = last_layer_attention_avg_last_tok[SYS_LENGTH:SYS_LENGTH+IMAGE_TOKEN_LENGTH]
+                        # get the indexs of the top ATTENTION_RANK tokens
+                        top_attention_rank_index = last_layer_attention_avg_last_tok_image.topk(ATTENTION_RANK).indices + SYS_LENGTH
+                        # keep index
+                        keep_indexs = torch.cat( (torch.arange(SYS_LENGTH,device=device), top_attention_rank_index, torch.arange(SYS_LENGTH+IMAGE_TOKEN_LENGTH,seq_length_with_past,device=device)))
+                        # sort index
+                        keep_indexs = keep_indexs.sort().values
+                        # update seq length
+                        new_seq_length = keep_indexs.shape[0]
+                        # filter hidden states
+                        hidden_states = hidden_states[:,keep_indexs,:]
+                        # update position ids
+                        position_ids = keep_indexs.unsqueeze(0)
+                        # update attention mask
+                        new_attention_mask = self._prepare_decoder_attention_mask(
+                            None, (batch_size, new_seq_length), inputs_embeds, 0
+                        )
+
+
+                # FastV Token Rerank, Attention Mask Implementation
+                elif USE_FAST_V:
+                    past_key_values_length = len(past_key_values)
+                    if idx<AGG_LAYER:
+                        new_attention_mask = torch.ones(
+                            (batch_size, seq_length_with_past), dtype=torch.bool, device=inputs_embeds.device
+                        )
+                        new_attention_mask = self._prepare_decoder_attention_mask(
+                            new_attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+                        )
+                        
+                    elif idx==AGG_LAYER:
+                        if idx!=0:
+                            last_layer_attention = layer_outputs[1]
+                            # compute average attention over different head
+                            last_layer_attention_avg = torch.mean(last_layer_attention, dim=1)[0]
+                            # generate new attention mask based on the average attention, sample the top ATTENTION_RANK tokens with highest attention
+                            last_layer_attention_avg_last_tok = last_layer_attention_avg[-1]
+                            # get the attention in image token
+                            last_layer_attention_avg_last_tok_image = last_layer_attention_avg_last_tok[SYS_LENGTH:SYS_LENGTH+IMAGE_TOKEN_LENGTH]
+                            # get the indexs of the top ATTENTION_RANK tokens
+                            top_attention_rank_index = last_layer_attention_avg_last_tok_image.topk(ATTENTION_RANK).indices + SYS_LENGTH
+                            # generate new attention mask
+                            gen_attention_mask = torch.ones((batch_size, seq_length_with_past), dtype=torch.bool, device=inputs_embeds.device)
+                            gen_attention_mask[:,SYS_LENGTH:SYS_LENGTH+IMAGE_TOKEN_LENGTH] = False
+                            gen_attention_mask[:,top_attention_rank_index] = True
+
+                            gen_attention_mask = self._prepare_decoder_attention_mask(
+                                gen_attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+                            )
+                            new_attention_mask = gen_attention_mask
+                        
+                        else:
+                            gen_attention_mask = torch.ones((batch_size, seq_length_with_past), dtype=torch.bool, device=inputs_embeds.device)
+
+                            rand_image_attention_mask = [1]*ATTENTION_RANK + [0]*(IMAGE_TOKEN_LENGTH-ATTENTION_RANK)
+                            random.shuffle(rand_image_attention_mask)
+
+                            gen_attention_mask[:, SYS_LENGTH:SYS_LENGTH+IMAGE_TOKEN_LENGTH] = torch.tensor(rand_image_attention_mask, dtype=attention_mask.dtype, device=inputs_embeds.device)
+                            gen_attention_mask = self._prepare_decoder_attention_mask(
+                                gen_attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+                            )
+                            new_attention_mask = gen_attention_mask
+
+
+                    else:
+                        new_attention_mask = gen_attention_mask
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=causal_mask,
@@ -1073,10 +1245,12 @@ class LlamaModel(LlamaPreTrainedModel):
         if self.config._attn_implementation == "sdpa":
             # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument,
             # in order to dispatch on Flash Attention 2.
-            if AttentionMaskConverter._ignore_causal_mask_sdpa(
-                attention_mask, inputs_embeds=input_tensor, past_key_values_length=past_seen_tokens
-            ):
-                return None
+            #TODO: undo pass here
+            pass
+            # if AttentionMaskConverter._ignore_causal_mask_sdpa(
+            #     attention_mask, inputs_embeds=input_tensor, past_key_values_length=past_seen_tokens
+            # ):
+            #     return None
 
         dtype, device = input_tensor.dtype, input_tensor.device
         min_dtype = torch.finfo(dtype).min
