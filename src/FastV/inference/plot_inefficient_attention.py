@@ -212,6 +212,8 @@ if __name__=="__main__":
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             keywords = [stop_str]
             stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
+            
+            #1d attention mask
             attention_mask = None
             with torch.inference_mode():
                 output_ids = model.generate(

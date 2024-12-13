@@ -1346,6 +1346,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        num_image_tokens_per_image=None,
+        image_token_indices_for_each_batch=None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -1390,6 +1392,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            num_image_tokens_per_image=num_image_tokens_per_image,
+            image_token_indices_for_each_batch=image_token_indices_for_each_batch,
         )
 
         hidden_states = outputs[0]

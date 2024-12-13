@@ -1293,6 +1293,8 @@ class GenerationMixin:
         streamer: Optional["BaseStreamer"] = None,
         negative_prompt_ids: Optional[torch.Tensor] = None,
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
+        num_image_tokens_per_image=None, 
+        image_token_indices_for_each_batch=None,
         **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor]:
         r"""
@@ -1381,7 +1383,9 @@ class GenerationMixin:
         # 1. Handle `generation_config` and kwargs that might update it, and validate the `.generate()` call
         self._validate_model_class()
         generation_config, model_kwargs = self._prepare_generation_config(generation_config, **kwargs)
-        self._validate_model_kwargs(model_kwargs.copy())
+        # Begin: David hat das auskommentiert
+        # self._validate_model_kwargs(model_kwargs.copy())
+        # End: David hat das auskommentiert
 
         # 2. Set generation parameters if not already defined
         if synced_gpus is None:
@@ -1583,6 +1587,8 @@ class GenerationMixin:
                 return_dict_in_generate=generation_config.return_dict_in_generate,
                 synced_gpus=synced_gpus,
                 streamer=streamer,
+                num_image_tokens_per_image=num_image_tokens_per_image,
+                image_token_indices_for_each_batch=image_token_indices_for_each_batch,
                 **model_kwargs,
             )
 
@@ -2322,6 +2328,8 @@ class GenerationMixin:
         return_dict_in_generate: Optional[bool] = None,
         synced_gpus: bool = False,
         streamer: Optional["BaseStreamer"] = None,
+        num_image_tokens_per_image=None, 
+        image_token_indices_for_each_batch=None,
         **model_kwargs,
     ) -> Union[GenerateNonBeamOutput, torch.LongTensor]:
         r"""
@@ -2496,6 +2504,8 @@ class GenerationMixin:
                 return_dict=True,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
+                num_image_tokens_per_image=num_image_tokens_per_image, 
+                image_token_indices_for_each_batch=image_token_indices_for_each_batch,
             )
 
             if synced_gpus and this_peer_finished:
