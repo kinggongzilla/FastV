@@ -202,6 +202,9 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
                     for k, v in overwrite_config.items():
                         setattr(llava_cfg, k, v)
 
+                if kwargs['quantization_config'] is not None:
+                    kwargs.pop('load_in_4bit', None)
+                    kwargs.pop('load_in_8bit', None)
                 model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, attn_implementation=attn_implementation, config=llava_cfg, **kwargs)
 
             elif "qwen" in model_name.lower() or "quyen" in model_name.lower():

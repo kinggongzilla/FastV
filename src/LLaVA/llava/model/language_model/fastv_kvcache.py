@@ -123,7 +123,7 @@ class FastVLlamaModel(LlamaModel):
                     use_cache,
                 )
             else:
-                K = 3
+                K = 32
                 ratio = 0.5
 
                 if decoder_layer.self_attn.layer_idx == K and seq_length > 1:
@@ -132,9 +132,11 @@ class FastVLlamaModel(LlamaModel):
                     image_start_index = image_token_indices_for_each_batch[0][1] #TODO: this does not work for multiple images yet!
                     image_attention_score = self.last_attention.mean(dim=1)[0][-1][image_start_index:image_start_index + num_image_tokens_per_image]  
                     # End Custom David Code
-                    top_attention_rank_index = image_attention_score.topk(int(576 * ratio)).indices + 35
-                    keep_indexs = torch.cat((torch.arange(35,device=device), top_attention_rank_index, torch.arange(611,seq_length,device=device)))
+                    top_attention_rank_index = image_attention_score.topk(int(num_image_tokens_per_image * ratio)).indices + image_start_index
+                    keep_indexs = torch.cat((torch.arange(image_start_index,device=device), top_attention_rank_index, torch.arange(image_start_index + num_image_tokens_per_image,seq_length,device=device)))
                     keep_indexs = keep_indexs.sort().values
+                    # TODO: David remove this
+                    # keep_indexs = torch.arange(seq_length,device=device)
                     hidden_states = hidden_states[:,keep_indexs,:]
                     if attention_mask is not None:
                         attention_mask = attention_mask[:,:,:hidden_states.shape[1],:hidden_states.shape[1]]

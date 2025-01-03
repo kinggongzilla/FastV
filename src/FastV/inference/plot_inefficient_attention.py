@@ -29,52 +29,45 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as Colormap
 from matplotlib.colors import LogNorm
 
-def visualize_attention(multihead_attention,output_path="atten_map_1.png",title="Layer 5"):
+def visualize_attention(multihead_attention, output_path="atten_map_1.png", title="Layer 5"):
     # Assuming the input is a numpy array of shape (1, num_heads, n_tokens, n_tokens)
     # First, we average the attention scores over the multiple heads
-    averaged_attention = torch.mean(multihead_attention, axis=1)[0].float()# Shape: (n_tokens, n_tokens)
-    
-    # pooling the attention scores  with stride 20
+    averaged_attention = torch.mean(multihead_attention, axis=1)[0].float()  # Shape: (n_tokens, n_tokens)
+
+    # Pooling the attention scores with stride 20
     averaged_attention = torch.nn.functional.avg_pool2d(averaged_attention.unsqueeze(0).unsqueeze(0), 20, stride=20).squeeze(0).squeeze(0)
     
     cmap = plt.cm.get_cmap("viridis")
-    plt.figure(figsize=(5, 5),dpi=400)
+    plt.figure(figsize=(5, 5), dpi=400)
 
     # Log normalization
     log_norm = LogNorm(vmin=0.0007, vmax=averaged_attention.max())
 
-    # set the x and y ticks to 20x of the original
-
-
-    ax = sns.heatmap(averaged_attention,
-                cmap=cmap,  # custom color map
-                norm=log_norm,  # 
-                # cbar_kws={'label': 'Attention score'},
-                )
+    ax = sns.heatmap(
+        averaged_attention,
+        cmap=cmap,  # Custom color map
+        norm=log_norm,  
+    )
     
-    # remove the x and y ticks
-    
-    # replace the x and y ticks with string
+    # Dynamically adjust label density
+    max_ticks = 20  # Maximum number of ticks to display
+    n_ticks = averaged_attention.shape[0]
+    tick_spacing = max(1, n_ticks // max_ticks)
 
-    x_ticks = [str(i*20) for i in range(0,averaged_attention.shape[0])]
-    y_ticks = [str(i*20) for i in range(0,averaged_attention.shape[0])]
-    ax.set_xticks([i for i in range(0,averaged_attention.shape[0])])
-    ax.set_yticks([i for i in range(0,averaged_attention.shape[0])])
+    x_ticks = [str(i * 20) for i in range(0, n_ticks, tick_spacing)]
+    y_ticks = [str(i * 20) for i in range(0, n_ticks, tick_spacing)]
+
+    ax.set_xticks(range(0, n_ticks, tick_spacing))
+    ax.set_yticks(range(0, n_ticks, tick_spacing))
     ax.set_xticklabels(x_ticks)
     ax.set_yticklabels(y_ticks)
 
-    # change the x tinks font size
-    plt.xticks(fontsize=3)
-    plt.yticks(fontsize=3)
-    
-    # make y label vertical
-    plt.yticks(rotation=0)
-    plt.xticks(rotation=90)     
-    
+    # Adjust font size and rotation for readability
+    plt.xticks(fontsize=5, rotation=90)
+    plt.yticks(fontsize=5, rotation=0)
+
     plt.title(title)
-    # tight layout
     plt.savefig(output_path, bbox_inches='tight')
-    # plt.show()
 
     top_five_attentions = []
     for row in averaged_attention:
@@ -84,7 +77,8 @@ def visualize_attention(multihead_attention,output_path="atten_map_1.png",title=
         top_five_line = list(zip(top_indices.tolist(), top_values.tolist()))
         top_five_attentions.append(top_five_line)
         
-    return top_five_attentions,averaged_attention    
+    return top_five_attentions, averaged_attention
+ 
 
 def load_image(image_file):
     if image_file.startswith('http://') or image_file.startswith('https://'):
@@ -130,7 +124,6 @@ if __name__=="__main__":
     )
     pargs = parser.parse_args()
 
-        # %%
     class InferenceArgs:
         model_path = pargs.model_path
         model_base = None
@@ -140,15 +133,18 @@ if __name__=="__main__":
         temperature = 0.2
         max_new_tokens = 512
         load_8bit = False
-        load_4bit = False
+        load_4bit = True
         debug = False
-        image_aspect_ratio = 'pad'
-    # %%
+        image_aspect_ratio = 'anyres'
+        image_grid_pinpoints = None
+
     args = InferenceArgs()
-    # %%
     disable_torch_init()
+
     model_name = get_model_name_from_path(args.model_path)
     tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit)
+
+    args.image_grid_pinpoints = model.config.image_grid_pinpoints
 
     if 'llama-2' in model_name.lower():
         conv_mode = "llava_llama_2"
@@ -166,17 +162,10 @@ if __name__=="__main__":
     else:
         args.conv_mode = conv_mode
 
-    
-
     model.config.use_fast_v = False
     model.model.reset_fastv()
 
     total_layers = model.config.num_hidden_layers
-
-
-
-    
-
 
     # %%
     def inference(prompts,images,append_output=""):
@@ -184,6 +173,7 @@ if __name__=="__main__":
         outputs_attention = []
         for prompt,image in tqdm(zip(prompts,images),total=len(prompts)):
             image = load_image(image)
+            image_size = image.size
             image_tensor = process_images([image], image_processor, args)
             conv = conv_templates[args.conv_mode].copy()
             conv.tokenizer = tokenizer
@@ -227,6 +217,7 @@ if __name__=="__main__":
                     output_attentions=True,
                     output_scores=True,
                     return_dict_in_generate=True,
+                    image_sizes=[image_size],
                     )
             
 
@@ -273,6 +264,8 @@ if __name__=="__main__":
     for i in outputs_attention:
         for j in range(0,total_layers):
             top5_attention,average_attentions = visualize_attention(i[0][j].cpu(),output_path=output_path+"/attn_maps/atten_map_"+str(j)+".png",title="Layer "+str(j+1))
+
+    print(model_output_ori)
 
 
 

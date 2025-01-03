@@ -414,7 +414,7 @@ class LlavaMetaForCausalLM(ABC):
             else:
                 raise ValueError(f"Unexpected mm_patch_merge_type: {self.config.mm_patch_merge_type}")
         else:
-            image_features = self.encode_images(images)
+            image_features = self.encode_images(images) # (num_images, number_of_image_tokens, embedding_size)
 
         # TODO: image start / end is not implemented here to support pretraining.
         if getattr(self.config, "tune_mm_mlp_adapter", False) and getattr(self.config, "mm_use_im_start_end", False):
@@ -448,7 +448,7 @@ class LlavaMetaForCausalLM(ABC):
         # rank_print("Inserting Images embedding")
         # Begin David Code
         image_token_indices_for_each_batch = []
-        num_image_tokens_per_image = image_features.shape[1] #TODO: does this work if multiple images in different sizes are added??
+        num_image_tokens_per_image = image_features[0].shape[0] #TODO: does this work if multiple images in different sizes are added??
         # End David Code
         for batch_idx, cur_input_ids in enumerate(input_ids):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
