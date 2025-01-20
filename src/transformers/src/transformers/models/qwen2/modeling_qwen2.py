@@ -184,6 +184,10 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
     Returns:
         `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
     """
+    position_ids = position_ids.to('cpu')
+    q = q.to('cpu')
+    k = k.to('cpu')
+
     cos = cos[position_ids].unsqueeze(unsqueeze_dim)
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -320,7 +324,7 @@ class Qwen2Attention(nn.Module):
                 raise ValueError(
                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                 )
-
+            attn_weights = attn_weights.to('cuda')
             attn_weights = attn_weights + attention_mask
 
         # upcast attention to fp32
@@ -1288,6 +1292,9 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        num_image_tokens_per_image=None,
+        image_token_indices=None,
+        image_token_indices_for_each_batch=None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:

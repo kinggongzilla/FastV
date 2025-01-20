@@ -96,8 +96,8 @@ if __name__=="__main__":
         '--model-path',
         type=str,
         required=False,
-        default="../llama3-llava-next-8b",
-        # default="../llava-onevision-qwen2-0.5b-ov",
+        # default="../llama3-llava-next-8b",
+        default="../llava-onevision-qwen2-0.5b-ov",
         help='Path to the pretrained model'
     )
     parser.add_argument(
