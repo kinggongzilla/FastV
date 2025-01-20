@@ -448,7 +448,7 @@ class LlavaMetaForCausalLM(ABC):
         # rank_print("Inserting Images embedding")
         # Begin David Code
         image_token_indices_for_each_batch = []
-        num_image_tokens_per_image = image_features[0].shape[0] #TODO: does this work if multiple images in different sizes are added??
+        num_image_tokens_per_image = image_features[0].shape[0] #TODO: david does this work if multiple images in different sizes are added??
         # End David Code
         for batch_idx, cur_input_ids in enumerate(input_ids):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()

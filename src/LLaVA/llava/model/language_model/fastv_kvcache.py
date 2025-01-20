@@ -4,9 +4,9 @@ from transformers import AutoConfig
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaModel, Cache, DynamicCache
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
 from transformers.models.llama import LlamaConfig
+from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
-
 
 class FastVLlamaModel(LlamaModel):
     """
@@ -123,25 +123,50 @@ class FastVLlamaModel(LlamaModel):
                     use_cache,
                 )
             else:
-                K = 32
-                ratio = 0.5
+                K = 3
+                ratio = 0.1
 
                 if decoder_layer.self_attn.layer_idx == K and seq_length > 1:
                     device = hidden_states.device
-                    # Begin Custom David Code
-                    image_start_index = image_token_indices_for_each_batch[0][1] #TODO: this does not work for multiple images yet!
-                    image_attention_score = self.last_attention.mean(dim=1)[0][-1][image_start_index:image_start_index + num_image_tokens_per_image]  
-                    # End Custom David Code
-                    top_attention_rank_index = image_attention_score.topk(int(num_image_tokens_per_image * ratio)).indices + image_start_index
-                    keep_indexs = torch.cat((torch.arange(image_start_index,device=device), top_attention_rank_index, torch.arange(image_start_index + num_image_tokens_per_image,seq_length,device=device)))
-                    keep_indexs = keep_indexs.sort().values
-                    # TODO: David remove this
-                    # keep_indexs = torch.arange(seq_length,device=device)
-                    hidden_states = hidden_states[:,keep_indexs,:]
-                    if attention_mask is not None:
-                        attention_mask = attention_mask[:,:,:hidden_states.shape[1],:hidden_states.shape[1]]
-                    position_ids = keep_indexs.unsqueeze(0)
 
+                    # Extract all start indices, ignoring the first and last elements
+                    image_start_indices = image_token_indices_for_each_batch[0][1:-1]
+
+                    # Initialize a list to store indices to keep
+                    keep_indices = []
+
+                    for image_start_index in image_start_indices:
+                        # Compute image attention scores for the current image
+                        image_attention_score = self.last_attention.mean(dim=1)[0][-1][
+                            image_start_index:image_start_index + num_image_tokens_per_image
+                        ]
+
+                        # Select top attention ranks for the current image
+                        top_attention_rank_index = (
+                            image_attention_score.topk(int(num_image_tokens_per_image * ratio)).indices + image_start_index
+                        )
+
+                        # Collect only the top attention indices for the current image
+                        keep_indices.append(top_attention_rank_index)
+
+                    # Add indices for tokens outside the image token ranges
+                    keep_indices.append(torch.arange(0, image_start_indices[0], device=device))
+                    keep_indices.append(torch.arange(image_start_indices[-1] + num_image_tokens_per_image, seq_length, device=device))
+
+                    # Concatenate and sort all indices to keep
+                    keep_indices = torch.cat(keep_indices).sort().values
+
+                    # Filter hidden states
+                    hidden_states = hidden_states[:, keep_indices, :]
+
+                    # Adjust attention mask if necessary
+                    if attention_mask is not None:
+                        attention_mask = attention_mask[:, :, :hidden_states.shape[1], :hidden_states.shape[1]]
+
+                    # Update position IDs
+                    position_ids = keep_indices.unsqueeze(0)
+
+                    # Execute the decoder layer with updated states
                     layer_outputs = decoder_layer(
                         hidden_states,
                         attention_mask=attention_mask,
@@ -150,6 +175,8 @@ class FastVLlamaModel(LlamaModel):
                         output_attentions=output_attentions,
                         use_cache=use_cache,
                     )
+
+
 
                 elif decoder_layer.self_attn.layer_idx == K - 1:
                     temp_layer_outputs = decoder_layer(
@@ -197,6 +224,17 @@ class FastVLlamaModel(LlamaModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
+    
+class FastVQwen2Model(Qwen2Model, FastVLlamaModel):
+    """
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`Qwen2DecoderLayer`]
+
+    Args:
+        config: Qwen2Config
+    """
+
+    def __init__(self, config: Qwen2Config):
+        super().__init__(config)
 
 def _prepare_4d_causal_attention_mask(
     attention_mask: Optional[torch.Tensor],

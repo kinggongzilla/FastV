@@ -113,6 +113,12 @@ class Qwen2Config(PretrainedConfig):
         sliding_window=4096,
         max_window_layers=28,
         attention_dropout=0.0,
+        fast_v_sys_length = None,
+        fast_v_image_token_length = None,
+        fast_v_attention_rank = None,
+        fast_v_agg_layer = None,
+        use_fast_v = False,
+        fast_v_inplace = False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -136,6 +142,14 @@ class Qwen2Config(PretrainedConfig):
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.attention_dropout = attention_dropout
+
+        # fastv config
+        self.fast_v_sys_length = fast_v_sys_length
+        self.fast_v_image_token_length = fast_v_image_token_length
+        self.fast_v_attention_rank = fast_v_attention_rank
+        self.fast_v_agg_layer = fast_v_agg_layer
+        self.use_fast_v = use_fast_v
+        self.fast_v_inplace = fast_v_inplace
 
         super().__init__(
             tie_word_embeddings=tie_word_embeddings,

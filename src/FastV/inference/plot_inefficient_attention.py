@@ -1,6 +1,4 @@
-# %%
 import os
-# %%
 import argparse
 import torch
 
@@ -99,7 +97,8 @@ if __name__=="__main__":
         type=str,
         required=False,
         default="../llama3-llava-next-8b",
-        help='Path to the pretrained model (default: "../llava-v1.5-7b")'
+        # default="../llava-onevision-qwen2-0.5b-ov",
+        help='Path to the pretrained model'
     )
     parser.add_argument(
         '--image-path',
@@ -133,7 +132,7 @@ if __name__=="__main__":
         temperature = 0.2
         max_new_tokens = 512
         load_8bit = False
-        load_4bit = True
+        load_4bit = False
         debug = False
         image_aspect_ratio = 'anyres'
         image_grid_pinpoints = None
@@ -188,6 +187,7 @@ if __name__=="__main__":
                 # first message
                 if model.config.mm_use_im_start_end:
                     inp = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + inp # False
+                    # inp = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + inp + '\n' + DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN # False
                 else:
                     inp = DEFAULT_IMAGE_TOKEN + '\n' + inp
                 conv.append_message(conv.roles[0], inp)
@@ -218,6 +218,7 @@ if __name__=="__main__":
                     output_scores=True,
                     return_dict_in_generate=True,
                     image_sizes=[image_size],
+                    pad_token_id=tokenizer.pad_token_id,
                     )
             
 
