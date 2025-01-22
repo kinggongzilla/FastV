@@ -153,14 +153,14 @@ for i in dataset:
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-path', type=str, required=True, default="/home/cl/models/llava-v1.5-13b")
-    parser.add_argument('--use-fast-v', type=str, required=True, help='whether to use fast-v')
+    parser.add_argument('--model-path', type=str, required=False, default="../llava-onevision-qwen2-0.5b-ov")
+    parser.add_argument('--use-fast-v', type=str, required=False, default=True, help='whether to use fast-v')
     parser.add_argument('--fast-v-sys-length', type=int, required=False, help='the length of system prompt')
     parser.add_argument('--fast-v-image-token-length', type=int, required=False, help='the length of image token')
     parser.add_argument('--fast-v-attention-rank', type=int, required=False, help='the rank of attention matrix')
     parser.add_argument('--fast-v-agg-layer', type=int, required=False, help='the layer of attention matrix')
     # output path
-    parser.add_argument('--output-path', type=str, required=True, help='the path to save the output json file')
+    parser.add_argument('--output-path', type=str, required=False, default="/home/david/JKU/master/thesis/FastV/test-results", help='the path to save the output json file')
 
     pargs = parser.parse_args()
 
@@ -186,14 +186,17 @@ if __name__=="__main__":
     disable_torch_init()
 
     model_name = get_model_name_from_path(args.model_path)
-    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit, device=args.device)
-
+    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit)
     if 'llama-2' in model_name.lower():
         conv_mode = "llava_llama_2"
     elif "v1" in model_name.lower():
         conv_mode = "llava_v1"
     elif "mpt" in model_name.lower():
         conv_mode = "mpt"
+    elif "llama3" in model_name.lower():
+        conv_mode = "llava_llama_3"
+    elif "qwen" in model_name.lower():
+        conv_mode = "qwen_2"
     else:
         conv_mode = "llava_v0"
 
@@ -223,8 +226,10 @@ if __name__=="__main__":
         outputs = []
         for prompt,image in tqdm(zip(prompts,images),total=len(prompts)):
             image = image.convert('RGB')
+            image_size = image.size
             image_tensor = process_images([image], image_processor, args)
             conv = conv_templates[args.conv_mode].copy()
+            conv.tokenizer = tokenizer
             if type(image_tensor) is list:
                 image_tensor = [image.to(model.device, dtype=torch.float16) for image in image_tensor]
             else:
@@ -263,6 +268,8 @@ if __name__=="__main__":
                     output_attentions=True,
                     output_scores=True,
                     return_dict_in_generate=True,
+                    image_sizes=[image_size],
+                    pad_token_id=tokenizer.pad_token_id,
                     )
             
 

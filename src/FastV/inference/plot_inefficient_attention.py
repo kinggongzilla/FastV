@@ -239,7 +239,7 @@ if __name__=="__main__":
     images = [pargs.image_path]
 
     model_output_ori,outputs_attention = inference(prompts,images)
-    model_output,outputs_attention = inference(prompts,images,append_output=model_output_ori[0])
+    # model_output,outputs_attention = inference(prompts,images,append_output=model_output_ori[0])
 
    
 
