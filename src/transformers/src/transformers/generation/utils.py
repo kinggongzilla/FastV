@@ -2498,6 +2498,11 @@ class GenerationMixin:
             # prepare model inputs
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
+            # if model_inputs['position_ids'].shape[1] == 1 and model_inputs['position_ids'].item() > model_inputs['past_key_values'][-1][-1].shape[-2]:
+            #     past_key_values_len = model_inputs['past_key_values'][-1][-1].shape[-2]
+            #     model_inputs['position_ids'][0][0] = past_key_values_len - 1
+                # model_inputs['attention_mask'] = torch.ones((1, past_key_values_len))
+                
             # forward pass to get next token
             outputs = self(
                 **model_inputs,

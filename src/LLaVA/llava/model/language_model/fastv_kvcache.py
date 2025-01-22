@@ -104,7 +104,7 @@ class FastVModelMixin:
         next_decoder_cache = None
 
         # run through layers
-        for decoder_layer in self.layers:
+        for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -190,6 +190,9 @@ class FastVModelMixin:
                     self.last_attention = temp_layer_outputs[1]
                     layer_outputs = temp_layer_outputs
                 else:
+                    if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
+                        position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
+                        attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
                     # normal
                     layer_outputs = decoder_layer(
                         hidden_states,
@@ -256,9 +259,8 @@ class FastVLlamaModel(LlamaModel, FastVModelMixin):
         # End Custom David Code
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        # Here you only call the shared logic, specifying K=3, ratio=0.1
         return self._forward_shared(
-            K=3,
+            K=1,
             ratio=0.1,
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -302,8 +304,8 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
 
         # Here you only call the shared logic, specifying K=3, ratio=0.5
         return self._forward_shared(
-            K=3,
-            ratio=0.5,
+            K=1,
+            ratio=0.1,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,

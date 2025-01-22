@@ -86,9 +86,6 @@ def load_image(image_file):
         image = Image.open(image_file).convert('RGB')
     return image
 
-
-
-
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
 
@@ -132,7 +129,7 @@ if __name__=="__main__":
         temperature = 0.2
         max_new_tokens = 512
         load_8bit = False
-        load_4bit = False
+        load_4bit = True if "llama" in model_path.lower() else False
         debug = False
         image_aspect_ratio = 'anyres'
         image_grid_pinpoints = None
@@ -153,6 +150,8 @@ if __name__=="__main__":
         conv_mode = "mpt"
     elif "llama3" in model_name.lower():
         conv_mode = "llava_llama_3"
+    elif "qwen" in model_name.lower():
+        conv_mode = "qwen_2"
     else:
         conv_mode = "llava_v0"
 
