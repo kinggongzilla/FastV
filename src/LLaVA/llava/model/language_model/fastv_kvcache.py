@@ -8,6 +8,11 @@ from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
 
+K = 2
+ratio_global = 0.5 # keep ratio of image tokens
+ratio_local = 0.5 # keep ratio of image tokens
+num_global_image_tokens = 729
+
 class FastVModelMixin:
     """
     A Mixin (or base class) containing the shared forward logic for 
@@ -17,7 +22,7 @@ class FastVModelMixin:
     def _forward_shared(
         self,
         K: int,
-        ratio: float,
+        ratio_global: float,
         input_ids: torch.LongTensor,
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor],
@@ -132,16 +137,38 @@ class FastVModelMixin:
 
                     keep_indices = []
                     for image_start_index in image_start_indices:
-                        # compute mean attention
-                        image_attention_score = self.last_attention.mean(dim=1)[0][-1][
-                            image_start_index : image_start_index + num_image_tokens_per_image
+
+                        # define global and local image token indices
+                        global_start_index = image_start_index
+                        global_end_index = image_start_index + num_global_image_tokens
+                        local_start_index = global_end_index
+                        local_end_index = image_start_index + num_image_tokens_per_image
+
+                        # compute mean attention of global image tokens
+                        image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
+                            global_start_index : global_end_index
                         ]
-                        # pick top ratio of them
-                        top_attention_rank_index = (
-                            image_attention_score.topk(int(num_image_tokens_per_image * ratio)).indices
+
+                        # compute mean attention of local image tokens
+                        image_attention_score_local = self.last_attention.mean(dim=1)[0][-1][
+                            local_start_index : local_end_index
+                        ]
+
+                        # pick top ratio of global image tokens
+                        top_attention_rank_index_global = (
+                            image_attention_score_global.topk(int(num_image_tokens_per_image * ratio_global)).indices
                             + image_start_index
                         )
-                        keep_indices.append(top_attention_rank_index)
+
+                        # pick top ratio of local image tokens
+                        top_attention_rank_index_local = (
+                            image_attention_score_local.topk(int(num_image_tokens_per_image * ratio_local)).indices
+                            + image_start_index
+                        )
+
+                        # append indices of top global and local image tokens
+                        keep_indices.append(top_attention_rank_index_global)
+                        keep_indices.append(top_attention_rank_index_local)
 
                     # add non-image tokens
                     keep_indices.append(torch.arange(0, image_start_indices[0], device=device))
@@ -190,9 +217,13 @@ class FastVModelMixin:
                     self.last_attention = temp_layer_outputs[1]
                     layer_outputs = temp_layer_outputs
                 else:
+                    # if attention_mask is None:
+                    #     attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
+                    #         attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+                    #     )
                     if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
-                        attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
+                        # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
                     # normal
                     layer_outputs = decoder_layer(
                         hidden_states,
@@ -253,15 +284,13 @@ class FastVLlamaModel(LlamaModel, FastVModelMixin):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        # Begin Custom David Code
         num_image_tokens_per_image: Optional[int] = None,
         image_token_indices_for_each_batch: Optional[torch.Tensor] = None,
-        # End Custom David Code
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         return self._forward_shared(
-            K=1,
-            ratio=0.1,
+            K=K,
+            ratio_global=ratio_global,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -282,7 +311,6 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
         config._attn_implementation_internal = "sdpa"
         self.last_attention = None
         super().__init__(config)
-        # any other init logic
 
     def forward(
         self,
@@ -296,16 +324,14 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        # Begin Custom David Code
         num_image_tokens_per_image: Optional[int] = None,
         image_token_indices_for_each_batch: Optional[torch.Tensor] = None,
-        # End Custom David Code
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         # Here you only call the shared logic, specifying K=3, ratio=0.5
         return self._forward_shared(
-            K=1,
-            ratio=0.1,
+            K=K,
+            ratio_global=ratio_global,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
