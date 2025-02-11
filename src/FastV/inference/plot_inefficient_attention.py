@@ -173,6 +173,13 @@ if __name__=="__main__":
             image = load_image(image)
             image_size = image.size
             image_tensor = process_images([image], image_processor, args)
+            #image_tensor.shape is (1,5,3,384,384)
+            #the second dimension is the number of image parts
+            #save each part as an image (total is 5)
+            for i in range(image_tensor.shape[1]):
+                img = image_tensor[0][i].cpu().detach().numpy().transpose(1,2,0)
+                img = Image.fromarray((img * 255).astype('uint8'))
+                img.save("output_example/anyres_image_parts/image_part_"+str(i)+".png")
             conv = conv_templates[args.conv_mode].copy()
             conv.tokenizer = tokenizer
             if type(image_tensor) is list:

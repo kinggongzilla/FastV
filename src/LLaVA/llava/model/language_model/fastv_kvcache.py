@@ -8,9 +8,9 @@ from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
 
-K = 2
-ratio_global = 0.5 # keep ratio of image tokens
-ratio_local = 0.5 # keep ratio of image tokens
+K = 3
+ratio_global = 0.5
+ratio_local = 0.5
 num_global_image_tokens = 729
 
 class FastVModelMixin:
@@ -139,6 +139,7 @@ class FastVModelMixin:
                     for image_start_index in image_start_indices:
 
                         # define global and local image token indices
+                        num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
                         global_start_index = image_start_index
                         global_end_index = image_start_index + num_global_image_tokens
                         local_start_index = global_end_index
@@ -156,13 +157,13 @@ class FastVModelMixin:
 
                         # pick top ratio of global image tokens
                         top_attention_rank_index_global = (
-                            image_attention_score_global.topk(int(num_image_tokens_per_image * ratio_global)).indices
+                            image_attention_score_global.topk(int(num_global_image_tokens * ratio_global)).indices
                             + image_start_index
                         )
 
                         # pick top ratio of local image tokens
                         top_attention_rank_index_local = (
-                            image_attention_score_local.topk(int(num_image_tokens_per_image * ratio_local)).indices
+                            image_attention_score_local.topk(int(num_local_image_tokens * ratio_local)).indices
                             + image_start_index
                         )
 
