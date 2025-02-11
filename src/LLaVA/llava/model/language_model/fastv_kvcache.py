@@ -8,6 +8,7 @@ from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
 
+USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = True
 K = 3
 ratio_global = 0.5
 ratio_local = 0.5
@@ -21,8 +22,6 @@ class FastVModelMixin:
 
     def _forward_shared(
         self,
-        K: int,
-        ratio_global: float,
         input_ids: torch.LongTensor,
         attention_mask: Optional[torch.Tensor],
         position_ids: Optional[torch.LongTensor],
@@ -138,38 +137,52 @@ class FastVModelMixin:
                     keep_indices = []
                     for image_start_index in image_start_indices:
 
-                        # define global and local image token indices
-                        num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
-                        global_start_index = image_start_index
-                        global_end_index = image_start_index + num_global_image_tokens
-                        local_start_index = global_end_index
-                        local_end_index = image_start_index + num_image_tokens_per_image
 
-                        # compute mean attention of global image tokens
-                        image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
-                            global_start_index : global_end_index
-                        ]
+                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL:
 
-                        # compute mean attention of local image tokens
-                        image_attention_score_local = self.last_attention.mean(dim=1)[0][-1][
-                            local_start_index : local_end_index
-                        ]
+                            # define global and local image token indices
+                            num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
+                            global_start_index = image_start_index
+                            global_end_index = image_start_index + num_global_image_tokens
+                            local_start_index = global_end_index
+                            local_end_index = image_start_index + num_image_tokens_per_image
 
-                        # pick top ratio of global image tokens
-                        top_attention_rank_index_global = (
-                            image_attention_score_global.topk(int(num_global_image_tokens * ratio_global)).indices
-                            + image_start_index
-                        )
+                            # compute mean attention of global image tokens
+                            image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
+                                global_start_index : global_end_index
+                            ]
 
-                        # pick top ratio of local image tokens
-                        top_attention_rank_index_local = (
-                            image_attention_score_local.topk(int(num_local_image_tokens * ratio_local)).indices
-                            + image_start_index
-                        )
+                            # compute mean attention of local image tokens
+                            image_attention_score_local = self.last_attention.mean(dim=1)[0][-1][
+                                local_start_index : local_end_index
+                            ]
 
-                        # append indices of top global and local image tokens
-                        keep_indices.append(top_attention_rank_index_global)
-                        keep_indices.append(top_attention_rank_index_local)
+                            # pick top ratio of global image tokens
+                            top_attention_rank_index_global = (
+                                image_attention_score_global.topk(int(num_global_image_tokens * ratio_global)).indices
+                                + image_start_index
+                            )
+
+                            # pick top ratio of local image tokens
+                            top_attention_rank_index_local = (
+                                image_attention_score_local.topk(int(num_local_image_tokens * ratio_local)).indices
+                                + image_start_index
+                            )
+
+                            # append indices of top global and local image tokens
+                            keep_indices.append(top_attention_rank_index_global)
+                            keep_indices.append(top_attention_rank_index_local)
+                        else:
+                            # compute mean attention
+                            image_attention_score = self.last_attention.mean(dim=1)[0][-1][
+                                image_start_index : image_start_index + num_image_tokens_per_image
+                            ]
+                            # pick top ratio of them
+                            top_attention_rank_index = (
+                                image_attention_score.topk(int(num_image_tokens_per_image * ratio_global)).indices
+                                + image_start_index
+                            )
+                            keep_indices.append(top_attention_rank_index)
 
                     # add non-image tokens
                     keep_indices.append(torch.arange(0, image_start_indices[0], device=device))
@@ -224,7 +237,7 @@ class FastVModelMixin:
                     #     )
                     if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
-                        # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
+                        attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
                     # normal
                     layer_outputs = decoder_layer(
                         hidden_states,
@@ -331,8 +344,6 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
 
         # Here you only call the shared logic, specifying K=3, ratio=0.5
         return self._forward_shared(
-            K=K,
-            ratio_global=ratio_global,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
