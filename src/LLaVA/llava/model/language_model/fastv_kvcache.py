@@ -8,10 +8,10 @@ from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
 
-USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = True
-K = 3
-ratio_global = 0.5
-ratio_local = 0.5
+USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
+K = 2
+ratio_global = 0.75
+ratio_local = 0.75
 num_global_image_tokens = 729
 
 class FastVModelMixin:
@@ -237,7 +237,7 @@ class FastVModelMixin:
                     #     )
                     if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
-                        attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
+                        # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
                     # normal
                     layer_outputs = decoder_layer(
                         hidden_states,
