@@ -10,7 +10,14 @@
 #SBATCH --chdir=/leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA
 #SBATCH --output=/leonardo_scratch/fast/EUHPC_D18_005/david/outputs
 
+# Interactive mode
+# salloc --nodes=1 --gres=gpu:1 --ntasks-per-node=1 --account=EUHPC_D18_005 --partition=boost_usr_prod
+
+# set HF home directory for offline datasets
+export HF_HOME="/leonardo_scratch/fast/EUHPC_D18_005/david/hf-datasets-cache"
+
 # activate conda env
+conda deactivate
 conda activate base
 
 srun ./lmms-eval.sh
