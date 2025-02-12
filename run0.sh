@@ -24,4 +24,4 @@ export HF_HOME="/leonardo_scratch/fast/EUHPC_D18_005/david/hf-datasets-cache"
 conda deactivate
 conda activate base
 
-srun ./lmms-eval.sh
+srun /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA/lmms-eval.sh
