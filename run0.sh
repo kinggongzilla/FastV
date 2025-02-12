@@ -9,6 +9,10 @@
 #SBATCH --time=01:00:00
 #SBATCH --chdir=/leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA
 #SBATCH --output=/leonardo_scratch/fast/EUHPC_D18_005/david/outputs
+#SBATCH --error=/leonardo_scratch/fast/EUHPC_D18_005/david/outputs/fastv.err
+
+# See running jobs
+# watch -n 1 squeue --me
 
 # Interactive mode
 # salloc --nodes=1 --gres=gpu:1 --ntasks-per-node=1 --account=EUHPC_D18_005 --partition=boost_usr_prod
