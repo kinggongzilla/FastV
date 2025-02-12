@@ -25,6 +25,7 @@ export HF_HOME="/leonardo_scratch/fast/EUHPC_D18_005/david/hf-datasets-cache"
 echo "Activating conda environment..."
 
 # activate conda env
+conda init
 conda deactivate
 conda activate base
 
