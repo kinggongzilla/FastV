@@ -6,32 +6,41 @@ KVCACHE_FILE="/home/david/JKU/master/thesis/FastV/src/LLaVA/llava/model/language
 # Python command (including arguments) that you want to run
 # We'll place a placeholder for the --log_samples_suffix, which we’ll update for each (K, ratio) pair
 RUN_CMD_BASE="python3 -m accelerate.commands.launch \
-    --num_processes=24 \
+    --mixed_precision fp16 \
+    --num_processes=1 \
     -m lmms_eval \
     --model llava_onevision \
-    --model_args pretrained=\"../../../llava-onevision-qwen2-0.5b-ov/,conv_template=qwen_2\" \
+    --model_args pretrained=\"../../../llava-onevision-qwen2-7b-ov/,conv_template=qwen_2\" \
     --tasks flickr30k,nocaps,ok_vqa,mmmu \
     --batch_size 1 \
     --log_samples"
 
+# RUN_CMD_BASE="python3 \
+#     -m lmms_eval \
+#     --model llava_onevision \
+#     --model_args pretrained=\"../../../llava-onevision-qwen2-0.5b-ov/,conv_template=qwen_2,device_map=auto\" \
+#     --tasks flickr30k,nocaps,ok_vqa,mmmu \
+#     --batch_size 1 \
+#     --log_samples"
+
 # List of (K, ratio) pairs you want to test
 declare -a pairs=(
-  # "1 0.9"
-  # "1 0.75"
-  # "1 0.5"
-  # "1 0.25"
-  # "1 0.1"
-  # "2 0.9"
+  "1 0.9"
+  "1 0.75"
+  "1 0.5"
+  "1 0.25"
+  "1 0.1"
+  "2 0.9"
   "2 0.75"
   "2 0.5"
   "2 0.25"
   "2 0.1"
-  # "3 0.9" 
-  # "3 0.75"
-  # "3 0.5"
-  # "3 0.25"
-  # "3 0.1"
-  # "100 1"
+  "3 0.9" 
+  "3 0.75"
+  "3 0.5"
+  "3 0.25"
+  "3 0.1"
+  "100 1"
 )
 
 # Loop over each (K, ratio) pair
