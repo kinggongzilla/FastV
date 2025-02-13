@@ -3,6 +3,9 @@
 # Path to your fastv_kvcache.py file
 KVCACHE_FILE="./llava/model/language_model/fastv_kvcache.py"
 
+# Model Name
+MODEL_NAME="llava-onevision-qwen2-0.5b-ov"
+
 # Python command (including arguments) that you want to run
 # We'll place a placeholder for the --log_samples_suffix, which we’ll update for each (K, ratio) pair
 RUN_CMD_BASE="python3 -m accelerate.commands.launch \
@@ -10,9 +13,10 @@ RUN_CMD_BASE="python3 -m accelerate.commands.launch \
     --num_processes=1 \
     -m lmms_eval \
     --model llava_onevision \
-    --model_args pretrained=\"../../../llava-onevision-qwen2-0.5b-ov/,conv_template=qwen_2\" \
+    --model_args pretrained=\"../../../$MODEL_NAME/,conv_template=qwen_2\" \
     --tasks flickr30k,nocaps,ok_vqa,mmmu \
     --batch_size 1 \
+    --limit 3 \
     --log_samples"
 
 # RUN_CMD_BASE="python3 \
@@ -63,7 +67,7 @@ for pair in "${pairs[@]}"; do
   # Construct the suffix for logs, for example k=3_r=0_5
   # We replace the dot (.) with underscore (_) for ratio
   RVAL_UNDERSCORE="${RVAL//./_}"
-  LOG_SUFFIX="k${KVAL}_r${RVAL_UNDERSCORE}"
+  LOG_SUFFIX="k${KVAL}_r${RVAL_UNDERSCORE}_${MODEL_NAME}"
   OUTPUT_PATH="./logs/${LOG_SUFFIX}"
 
   # Execute the command
