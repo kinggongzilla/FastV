@@ -11,6 +11,12 @@
 #SBATCH --output=/leonardo_scratch/fast/EUHPC_D18_005/david/outputs/fastv.out
 #SBATCH --error=/leonardo_scratch/fast/EUHPC_D18_005/david/outputs/fastv.err
 
+# See running jobs
+# watch -n 1 squeue --me
+
+# Interactive mode
+# salloc --nodes=1 --gres=gpu:1 --ntasks-per-node=1 --cpus-per-task=8 --account=EUHPC_D18_005 --partition=boost_usr_prod
+
 # Initialize conda
 source /leonardo/home/userexternal/dhauser0/miniconda3/etc/profile.d/conda.sh
 
