@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Path to your fastv_kvcache.py file
-KVCACHE_FILE="/home/david/JKU/master/thesis/FastV/src/LLaVA/llava/model/language_model/fastv_kvcache.py"
+KVCACHE_FILE="./llava/model/language_model/fastv_kvcache.py"
 
 # Python command (including arguments) that you want to run
 # We'll place a placeholder for the --log_samples_suffix, which we’ll update for each (K, ratio) pair
@@ -10,7 +10,7 @@ RUN_CMD_BASE="python3 -m accelerate.commands.launch \
     --num_processes=1 \
     -m lmms_eval \
     --model llava_onevision \
-    --model_args pretrained=\"../../../llava-onevision-qwen2-7b-ov/,conv_template=qwen_2\" \
+    --model_args pretrained=\"../../../llava-onevision-qwen2-0.5b-ov/,conv_template=qwen_2\" \
     --tasks flickr30k,nocaps,ok_vqa,mmmu \
     --batch_size 1 \
     --log_samples"
