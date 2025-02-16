@@ -28,7 +28,7 @@ conda activate base
 
 # Install accelerate, local lmms-evals, local transformers (if not already installed)
 pip show accelerate || pip install accelerate
-cd /leonardo_scratch/fast/EUHPC_D18_005/david/lmms-eval
+cd /leonardo_scratch/fast/EUHPC_D18_005/david/lmms-eval-leonardo
 pip install -e .
 cd /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/transformers
 pip install -e .
