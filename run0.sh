@@ -1,9 +1,9 @@
 #!/bin/bash -l
 #SBATCH --account=EUHPC_D18_005
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:1
+#SBATCH --nodes=2
+#SBATCH --gres=gpu:4
 #SBATCH --tasks-per-node=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=32
 #SBATCH --partition=boost_usr_prod
 #SBATCH --qos=boost_qos_lprod
 #SBATCH --time=48:00:00
