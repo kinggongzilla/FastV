@@ -41,5 +41,8 @@ export HF_HOME="/leonardo_scratch/fast/EUHPC_D18_005/david/hf-datasets-cache"
 # Change directory to make relative model path work
 cd /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA
 
+# Set the machine rank
+export RANK=$SLURM_NODEID
+
 # Run the script
 /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA/lmms-evals.sh

@@ -10,6 +10,8 @@ MODEL_NAME="llava-onevision-qwen2-7b-ov"
 # We'll place a placeholder for the --log_samples_suffix, which we’ll update for each (K, ratio) pair
 RUN_CMD_BASE="python3 -m accelerate.commands.launch \
     --mixed_precision fp16 \
+    --machine_rank=$RANK \
+    --num_machines=2 \
     --num_processes=4 \
     -m lmms_eval \
     --model llava_onevision \
