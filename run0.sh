@@ -26,8 +26,12 @@ source /leonardo/home/userexternal/dhauser0/miniconda3/etc/profile.d/conda.sh
 # Activate conda environment
 conda activate base
 
-# Install accelerate (if not already installed)
+# Install accelerate, local lmms-evals, local transformers (if not already installed)
 pip show accelerate || pip install accelerate
+cd /leonardo_scratch/fast/EUHPC_D18_005/david/lmms-eval
+pip install -e .
+cd /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/transformers
+pip install -e .
 
 # Deactivate and activate conda so accelerate is correctly found
 conda deactivate
@@ -35,6 +39,8 @@ conda activate base
 
 # Set HF home directory for offline datasets
 export HF_HOME="/leonardo_scratch/fast/EUHPC_D18_005/david/hf-datasets-cache"
+
+# export HF_DATASETS_OFFLINE=1
 
 # Change directory to make relative model path work
 cd /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA
