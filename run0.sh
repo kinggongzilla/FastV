@@ -26,12 +26,8 @@ source /leonardo/home/userexternal/dhauser0/miniconda3/etc/profile.d/conda.sh
 # Activate conda environment
 conda activate base
 
-# Install accelerate, local lmms-evals, local transformers (if not already installed)
+# Install accelerate (if not already installed)
 pip show accelerate || pip install accelerate
-cd /leonardo_scratch/fast/EUHPC_D18_005/david/lmms-eval-leonardo
-pip install -e .
-cd /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/transformers
-pip install -e .
 
 # Deactivate and activate conda so accelerate is correctly found
 conda deactivate
