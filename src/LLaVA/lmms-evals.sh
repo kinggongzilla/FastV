@@ -12,7 +12,7 @@ RUN_CMD_BASE="python3 -m accelerate.commands.launch \
     --mixed_precision fp16 \
     --machine_rank=$RANK \
     --num_machines=2 \
-    --num_processes=4 \
+    --num_processes=8 \
     -m lmms_eval \
     --model llava_onevision \
     --model_args pretrained=\"../../../$MODEL_NAME/,conv_template=qwen_2\" \
