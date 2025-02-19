@@ -151,11 +151,6 @@ class FastVModelMixin:
                         ratio_local = local_tokens_to_drop / num_local_image_tokens
 
                         if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL: #and ratio_local < 1:
-                            print("==============")
-                            print("Using separate ratios for global and local image tokens")
-                            print("Local ratio: ", ratio_local)
-                            print("==============")
-
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
                                 global_start_index : global_end_index
