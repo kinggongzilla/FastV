@@ -9,9 +9,9 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
 
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
-K = 2
-ratio_global = 0.75
-ratio_local = 0.75
+K = 3
+total_ratio = 0.5
+ratio_global = 0.25
 num_global_image_tokens = 729
 
 class FastVModelMixin:
@@ -146,6 +146,12 @@ class FastVModelMixin:
                             global_end_index = image_start_index + num_global_image_tokens
                             local_start_index = global_end_index
                             local_end_index = image_start_index + num_image_tokens_per_image
+
+                            # Calculate ratio_local
+                            total_tokens_to_drop = total_ratio * num_image_tokens_per_image
+                            global_tokens_to_drop = ratio_global * num_global_image_tokens
+                            local_tokens_to_drop = total_tokens_to_drop - global_tokens_to_drop
+                            ratio_local = local_tokens_to_drop / num_local_image_tokens
 
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
