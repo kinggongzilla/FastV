@@ -4,14 +4,21 @@
 KVCACHE_FILE="./llava/model/language_model/fastv_kvcache.py"
 
 # Model Name
-MODEL_NAME="llava-onevision-qwen2-0.5b-ov"
+MODEL_NAME="llava-onevision-qwen2-7b-ov"
+
+# If RANK is undefined
+if [ -z "$RANK" ]; then
+  # Set RANK to 0
+  RANK=0
+fi
 
 # Python command (including arguments) that you want to run
 # We'll place a placeholder for the --log_samples_suffix, which we’ll update for each (K, ratio) pair
 RUN_CMD_BASE="python3 -m accelerate.commands.launch \
     --mixed_precision fp16 \
+    --machine_rank=$RANK \
     --num_machines=1 \
-    --num_processes=8 \
+    --num_processes=4 \
     -m lmms_eval \
     --model llava_onevision \
     --model_args pretrained=\"../../../$MODEL_NAME/,conv_template=qwen_2\" \
@@ -41,7 +48,7 @@ declare -a pairs=(
    "3 0.5 0.25"
    "3 0.5 0.75"
    "3 0.5 0.9"
-  "100 1 1"
+#  "100 1 1"
 )
 
 # Loop over each (K, total_ratio, global_ratio) pair

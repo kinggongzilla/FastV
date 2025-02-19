@@ -8,7 +8,7 @@ from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
 
-USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
+USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = True
 K = 3
 total_ratio = 0.5
 ratio_global = 0.25
@@ -137,21 +137,24 @@ class FastVModelMixin:
                     keep_indices = []
                     for image_start_index in image_start_indices:
 
+                        # define global and local image token indices
+                        num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
+                        global_start_index = image_start_index
+                        global_end_index = image_start_index + num_global_image_tokens
+                        local_start_index = global_end_index
+                        local_end_index = image_start_index + num_image_tokens_per_image
 
-                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL:
+                        # Calculate ratio_local
+                        total_tokens_to_drop = total_ratio * num_image_tokens_per_image
+                        global_tokens_to_drop = ratio_global * num_global_image_tokens
+                        local_tokens_to_drop = local_tokens_to_drop = max(0, total_tokens_to_drop - global_tokens_to_drop)
+                        ratio_local = local_tokens_to_drop / num_local_image_tokens
 
-                            # define global and local image token indices
-                            num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
-                            global_start_index = image_start_index
-                            global_end_index = image_start_index + num_global_image_tokens
-                            local_start_index = global_end_index
-                            local_end_index = image_start_index + num_image_tokens_per_image
-
-                            # Calculate ratio_local
-                            total_tokens_to_drop = total_ratio * num_image_tokens_per_image
-                            global_tokens_to_drop = ratio_global * num_global_image_tokens
-                            local_tokens_to_drop = total_tokens_to_drop - global_tokens_to_drop
-                            ratio_local = local_tokens_to_drop / num_local_image_tokens
+                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL: #and ratio_local < 1:
+                            print("==============")
+                            print("Using separate ratios for global and local image tokens")
+                            print("Local ratio: ", ratio_local)
+                            print("==============")
 
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
