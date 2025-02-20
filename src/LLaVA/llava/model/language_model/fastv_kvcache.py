@@ -148,7 +148,7 @@ class FastVModelMixin:
                         total_tokens_to_drop = total_ratio * num_image_tokens_per_image
                         global_tokens_to_drop = ratio_global * num_global_image_tokens
                         local_tokens_to_drop = local_tokens_to_drop = max(0, total_tokens_to_drop - global_tokens_to_drop)
-                        if num_global_image_tokens > 0:
+                        if num_local_image_tokens > 0:
                             ratio_local = local_tokens_to_drop / num_local_image_tokens
                         else:
                             ratio_local = 0
