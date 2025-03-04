@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --account=EUHPC_D18_005
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --tasks-per-node=1
 #SBATCH --cpus-per-task=32
@@ -34,15 +34,13 @@ conda deactivate
 conda activate base
 
 # Set HF home directory for offline datasets
-export HF_HOME="/leonardo_scratch/fast/EUHPC_D18_005/david/hf-datasets-cache"
-
-# export HF_DATASETS_OFFLINE=1
+export HF_HOME="/leonardo_work/EUHPC_D18_005/david/hf-datasets-cache"
 
 # Change directory to make relative model path work
 cd /leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA
 
 # Set the machine rank
-export RANK=$SLURM_NODEID
+export RANK=$SLURM_PROCID
 
 # Set the master address and port
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
