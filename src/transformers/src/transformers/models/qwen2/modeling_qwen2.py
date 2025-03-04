@@ -292,11 +292,6 @@ class Qwen2Attention(nn.Module):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        #for debugging
-        # if self.layer_idx == 0:
-        #     print("breakpoint here")
-        # print(self.layer_idx)
-
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
             if self.layer_idx is None:

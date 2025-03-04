@@ -7,12 +7,16 @@ from transformers.models.llama import LlamaConfig
 from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
+import os
+import json
 
-USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = True
-K = 3
-total_ratio = 0.5
-ratio_global = 0.25
+CALCULATE_ATTENTION_AVERAGES = True #this significantly slows down speed; hence only set True when necessary
+USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
+K = 100
+total_ratio = 1
+ratio_global = 1
 num_global_image_tokens = 729
+avg_attentions = {}
 
 class FastVModelMixin:
     """
@@ -136,24 +140,13 @@ class FastVModelMixin:
 
                     keep_indices = []
                     for image_start_index in image_start_indices:
+                        global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
+                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
+                            print("==============")
+                            print("Using separate ratios for global and local image tokens")
+                            print("Local ratio: ", ratio_local)
+                            print("==============")
 
-                        # define global and local image token indices
-                        num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
-                        global_start_index = image_start_index
-                        global_end_index = image_start_index + num_global_image_tokens
-                        local_start_index = global_end_index
-                        local_end_index = image_start_index + num_image_tokens_per_image
-
-                        # Calculate ratio_local
-                        total_tokens_to_drop = total_ratio * num_image_tokens_per_image
-                        global_tokens_to_drop = ratio_global * num_global_image_tokens
-                        local_tokens_to_drop = local_tokens_to_drop = max(0, total_tokens_to_drop - global_tokens_to_drop)
-                        if num_local_image_tokens > 0:
-                            ratio_local = local_tokens_to_drop / num_local_image_tokens
-                        else:
-                            ratio_local = 0
-
-                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1 and ratio_local is not 0:
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
                                 global_start_index : global_end_index
@@ -238,10 +231,57 @@ class FastVModelMixin:
                     self.last_attention = temp_layer_outputs[1]
                     layer_outputs = temp_layer_outputs
                 else:
-                    # if attention_mask is None:
-                    #     attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
-                    #         attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
-                    #     )
+                    if CALCULATE_ATTENTION_AVERAGES and decoder_layer.self_attn.layer_idx > 1 :
+                        temp_layer_outputs = decoder_layer(
+                            hidden_states,
+                            attention_mask=attention_mask,
+                            position_ids=position_ids,
+                            past_key_value=past_key_values,
+                            output_attentions=True,
+                            use_cache=use_cache,
+                        )
+                        self.last_attention = temp_layer_outputs[1]
+
+                        # Load existing avg_attentions from file
+                        avg_attentions = self._load_avg_attentions('/home/david/JKU/master/thesis/FastV/src/LLaVA/logs/avg_attentions.json')
+                        image_start_indices = image_token_indices_for_each_batch[0][1:-1]
+                        for image_start_index in image_start_indices:
+                            global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
+
+                            # compute mean attention of global image tokens
+                            image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
+                                global_start_index : global_end_index
+                            ]
+
+                            # compute mean attention of local image tokens
+                            image_attention_score_local = self.last_attention.mean(dim=1)[0][-1][
+                                local_start_index : local_end_index
+                            ]
+
+                            # calculate average attention per global and local token
+                            mean_global_attention = image_attention_score_global.mean().item()
+                            mean_local_attention = image_attention_score_local.mean().item()
+
+                            layer_idx_str = str(decoder_layer.self_attn.layer_idx)
+
+                            # Check if the outer key exists, if not, initialize it with an empty dictionary
+                            if layer_idx_str not in avg_attentions:
+                                avg_attentions[layer_idx_str] = {}
+
+                            # Initialize 'global' as a list if it doesn't exist
+                            if 'global' not in avg_attentions[layer_idx_str]:
+                                avg_attentions[layer_idx_str]['global'] = []
+
+                            # Initialize 'global' as a list if it doesn't exist
+                            if 'local' not in avg_attentions[layer_idx_str]:
+                                avg_attentions[layer_idx_str]['local'] = []
+
+                            # Now you can safely set the inner keys
+                            avg_attentions[layer_idx_str]['global'].append(mean_global_attention)
+                            avg_attentions[layer_idx_str]['local'].append(mean_local_attention)
+
+                        self._save_avg_attentions(avg_attentions, '/home/david/JKU/master/thesis/FastV/src/LLaVA/logs/avg_attentions.json')
+
                     if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
                         # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
@@ -285,6 +325,54 @@ class FastVModelMixin:
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
+        )
+    
+    def _save_avg_attentions(self, avg_attentions, file_path):
+        """
+        Save the avg_attentions dictionary to a JSON file.
+        """
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        with open(file_path, 'w') as f:
+            json.dump(avg_attentions, f)
+
+    def _load_avg_attentions(self, file_path):
+        """
+        Load the avg_attentions dictionary from a JSON file.
+        If the file does not exist, return an empty dictionary.
+        """
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        return {}
+
+    def _calculate_image_token_indices(
+        self,
+        num_image_tokens_per_image,
+        num_global_image_tokens,
+        image_start_index,
+    ):
+        # Define global and local image token indices
+        num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
+        global_start_index = image_start_index
+        global_end_index = image_start_index + num_global_image_tokens
+        local_start_index = global_end_index
+        local_end_index = image_start_index + num_image_tokens_per_image
+
+        # Calculate ratio_local
+        total_tokens_to_drop = total_ratio * num_image_tokens_per_image
+        global_tokens_to_drop = ratio_global * num_global_image_tokens
+        local_tokens_to_drop = max(0, total_tokens_to_drop - global_tokens_to_drop)
+        ratio_local = local_tokens_to_drop / num_local_image_tokens if num_local_image_tokens > 0 else 0
+
+        return (
+            global_start_index,
+            global_end_index,
+            local_start_index,
+            local_end_index,
+            ratio_local,
+            num_local_image_tokens
         )
 
 class FastVLlamaModel(LlamaModel, FastVModelMixin):
