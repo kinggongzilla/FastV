@@ -10,13 +10,18 @@ from typing import List, Optional, Tuple, Union
 import os
 import json
 
-CALCULATE_ATTENTION_AVERAGES = True #this significantly slows down speed; hence only set True when necessary
+CALCULATE_NUM_KEPT_TOKENS = True
+CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
-K = 100
-total_ratio = 1
-ratio_global = 1
+
+LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
+
+K = 3
+total_ratio = 0.5
+ratio_global = 0.5
 num_global_image_tokens = 729
 avg_attentions = {}
+num_global_local_tokens_kept = {}
 
 class FastVModelMixin:
     """
@@ -184,6 +189,38 @@ class FastVModelMixin:
                             )
                             keep_indices.append(top_attention_rank_index)
 
+                            if CALCULATE_NUM_KEPT_TOKENS:
+                                # Calculate how many tokens are global and local
+                                num_global_tokens_kept = ((top_attention_rank_index >= global_start_index) & (top_attention_rank_index < global_end_index)).sum().item()
+                                num_local_tokens_kept = ((top_attention_rank_index >= local_start_index) & (top_attention_rank_index < local_end_index)).sum().item()
+                                num_tokens_kept = self._load_json_file(f'{LOGS_DIR}/num_tokens.json')
+                                
+                                layer_idx_str = str(decoder_layer.self_attn.layer_idx)
+
+                                # Check if the outer key exists, if not, initialize it with an empty dictionary
+                                if layer_idx_str not in num_tokens_kept:
+                                    num_tokens_kept[layer_idx_str] = {}
+
+                                # Initialize 'global' as a list if it doesn't exist
+                                if 'global' not in num_tokens_kept[layer_idx_str]:
+                                    num_tokens_kept[layer_idx_str]['global'] = {}
+                                    num_tokens_kept[layer_idx_str]['global']['num_tokens_kept'] = []
+                                    num_tokens_kept[layer_idx_str]['global']['num_tokens_total'] = []
+
+                                # Initialize 'local' as a list if it doesn't exist
+                                if 'local' not in num_tokens_kept[layer_idx_str]:
+                                    num_tokens_kept[layer_idx_str]['local'] = {}
+                                    num_tokens_kept[layer_idx_str]['local']['num_tokens_kept'] = []
+                                    num_tokens_kept[layer_idx_str]['local']['num_tokens_total'] = []
+
+                                num_tokens_kept[layer_idx_str]['global']['num_tokens_kept'].append(num_global_tokens_kept)
+                                num_tokens_kept[layer_idx_str]['local']['num_tokens_kept'].append(num_local_tokens_kept)
+
+                                num_tokens_kept[layer_idx_str]['global']['num_tokens_total'].append(num_global_image_tokens)
+                                num_tokens_kept[layer_idx_str]['local']['num_tokens_total'].append(num_local_image_tokens)
+
+                                self._save_json_file(num_tokens_kept, f'{LOGS_DIR}/num_tokens.json')
+
                     # add non-image tokens
                     keep_indices.append(torch.arange(0, image_start_indices[0], device=device))
                     keep_indices.append(torch.arange(
@@ -231,7 +268,7 @@ class FastVModelMixin:
                     self.last_attention = temp_layer_outputs[1]
                     layer_outputs = temp_layer_outputs
                 else:
-                    if CALCULATE_ATTENTION_AVERAGES and decoder_layer.self_attn.layer_idx > 1 :
+                    if CALCULATE_ATTENTION_AVERAGES and decoder_layer.self_attn.layer_idx > 0 :
                         temp_layer_outputs = decoder_layer(
                             hidden_states,
                             attention_mask=attention_mask,
@@ -243,7 +280,7 @@ class FastVModelMixin:
                         self.last_attention = temp_layer_outputs[1]
 
                         # Load existing avg_attentions from file
-                        avg_attentions = self._load_avg_attentions('/home/david/JKU/master/thesis/FastV/src/LLaVA/logs/avg_attentions.json')
+                        avg_attentions = self._load_json_file(f'{LOGS_DIR}/avg_attentions.json')
                         image_start_indices = image_token_indices_for_each_batch[0][1:-1]
                         for image_start_index in image_start_indices:
                             global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
@@ -280,7 +317,7 @@ class FastVModelMixin:
                             avg_attentions[layer_idx_str]['global'].append(mean_global_attention)
                             avg_attentions[layer_idx_str]['local'].append(mean_local_attention)
 
-                        self._save_avg_attentions(avg_attentions, '/home/david/JKU/master/thesis/FastV/src/LLaVA/logs/avg_attentions.json')
+                        self._save_json_file(avg_attentions, f'{LOGS_DIR}/avg_attentions.json')
 
                     if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
@@ -327,19 +364,19 @@ class FastVModelMixin:
             attentions=all_self_attns,
         )
     
-    def _save_avg_attentions(self, avg_attentions, file_path):
+    def _save_json_file(self, dict, file_path):
         """
-        Save the avg_attentions dictionary to a JSON file.
+        Save the dictionary to a JSON file.
         """
         # Ensure the directory exists
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         with open(file_path, 'w') as f:
-            json.dump(avg_attentions, f)
+            json.dump(dict, f)
 
-    def _load_avg_attentions(self, file_path):
+    def _load_json_file(self, file_path):
         """
-        Load the avg_attentions dictionary from a JSON file.
+        Load the dictionary from a JSON file.
         If the file does not exist, return an empty dictionary.
         """
         if os.path.exists(file_path):
