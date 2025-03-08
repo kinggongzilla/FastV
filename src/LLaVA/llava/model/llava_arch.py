@@ -265,7 +265,8 @@ class LlavaMetaForCausalLM(ABC):
             video_idx_in_batch = []
             for _ in range(len(modalities)):
                 if modalities[_] == "video":
-                    video_idx_in_batch.append(_)
+                    # video_idx_in_batch.append(_) # this is original code
+                    video_idx_in_batch = range(len(images))
 
             images_list = []
             for image in images:
@@ -280,11 +281,11 @@ class LlavaMetaForCausalLM(ABC):
             # image_features,all_faster_video_features = self.encode_multimodals(concat_images, video_idx_in_batch, split_sizes)
 
             # This is a list, each element is [num_images, patch * patch, dim]
-            # rank_print(f"Concat images : {concat_images.shape}")
             encoded_image_features = torch.split(encoded_image_features, split_sizes)
             image_features = []
             for idx, image_feat in enumerate(encoded_image_features):
-                if idx in video_idx_in_batch:
+                # len(encoded_image_features) > len(video_idx_in_batch) is for case where one image placeholder is passed for each frame
+                if idx in video_idx_in_batch or len(encoded_image_features) > len(video_idx_in_batch):
                     image_features.append(self.get_2dPool(image_feat))
                 else:
                     image_features.append(image_feat)
@@ -324,8 +325,6 @@ class LlavaMetaForCausalLM(ABC):
                                         concat_slow_fater_token.append(torch.cat((faster_video_feature[_], self.model.faster_token[None].to(image_feature.device)), dim=0))
                                 # import pdb; pdb.set_trace()
                                 image_feature = torch.cat(concat_slow_fater_token)
-
-                                # print("!!!!!!!!!!!!")
                         
                             new_image_features.append(image_feature)
                         elif mm_newline_position == "frame":
@@ -463,6 +462,7 @@ class LlavaMetaForCausalLM(ABC):
                 continue
 
             image_token_indices = [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
+            
             # Begin David Code
             image_token_indices_for_each_batch.append(image_token_indices)
             # End David Code

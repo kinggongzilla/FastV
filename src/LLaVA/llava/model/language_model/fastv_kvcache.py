@@ -10,16 +10,16 @@ from typing import List, Optional, Tuple, Union
 import os
 import json
 
-CALCULATE_NUM_KEPT_TOKENS = True
+CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
-K = 3
-total_ratio = 0.5
-ratio_global = 0.5
-num_global_image_tokens = 729
+K = 1
+total_ratio = 0.25
+global_ratio = 0.25
+num_global_image_tokens = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
 num_global_local_tokens_kept = {}
 
@@ -146,12 +146,8 @@ class FastVModelMixin:
                     keep_indices = []
                     for image_start_index in image_start_indices:
                         global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
-                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
-                            print("==============")
-                            print("Using separate ratios for global and local image tokens")
-                            print("Local ratio: ", ratio_local)
-                            print("==============")
 
+                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
                                 global_start_index : global_end_index
@@ -164,7 +160,7 @@ class FastVModelMixin:
 
                             # pick top ratio of global image tokens
                             top_attention_rank_index_global = (
-                                image_attention_score_global.topk(int(num_global_image_tokens * ratio_global)).indices
+                                image_attention_score_global.topk(int(num_global_image_tokens * global_ratio)).indices
                                 + image_start_index
                             )
 
@@ -184,7 +180,7 @@ class FastVModelMixin:
                             ]
                             # pick top ratio of them
                             top_attention_rank_index = (
-                                image_attention_score.topk(int(num_image_tokens_per_image * ratio_global)).indices
+                                image_attention_score.topk(int(num_image_tokens_per_image * total_ratio)).indices
                                 + image_start_index
                             )
                             keep_indices.append(top_attention_rank_index)
@@ -322,6 +318,7 @@ class FastVModelMixin:
                     if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
                         # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
+
                     # normal
                     layer_outputs = decoder_layer(
                         hidden_states,
@@ -399,7 +396,7 @@ class FastVModelMixin:
 
         # Calculate ratio_local
         total_tokens_to_drop = total_ratio * num_image_tokens_per_image
-        global_tokens_to_drop = ratio_global * num_global_image_tokens
+        global_tokens_to_drop = global_ratio * num_global_image_tokens
         local_tokens_to_drop = max(0, total_tokens_to_drop - global_tokens_to_drop)
         ratio_local = local_tokens_to_drop / num_local_image_tokens if num_local_image_tokens > 0 else 0
 
@@ -435,8 +432,6 @@ class FastVLlamaModel(LlamaModel, FastVModelMixin):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         return self._forward_shared(
-            K=K,
-            ratio_global=ratio_global,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
