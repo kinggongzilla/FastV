@@ -4,7 +4,7 @@
 KVCACHE_FILE="./llava/model/language_model/fastv_kvcache.py"
 
 # Model Name
-MODEL_NAME="llava-onevision-qwen2-0.5b-ov"
+MODEL_NAME="llava-onevision-qwen2-7b-ov"
 
 # If RANK is undefined
 if [ -z "$RANK" ]; then
@@ -16,11 +16,8 @@ fi
 # We'll place a placeholder for the --log_samples_suffix, which we’ll update for each (K, ratio) pair
 RUN_CMD_BASE="python3 -m accelerate.commands.launch \
     --mixed_precision fp16 \
-    --machine_rank=$RANK \
     --num_machines=1 \
     --num_processes=4 \
-    --main_process_ip=$MASTER_ADDR \
-    --main_process_port=$MASTER_PORT \
     -m lmms_eval \
     --model llava_onevision \
     --model_args pretrained=\"../../../$MODEL_NAME/,conv_template=qwen_2\" \
