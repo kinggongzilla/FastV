@@ -1,3 +1,29 @@
+<h1>WHERE TO CHANGE STUFF</h1>
+
+<strong>Use FastV over individual frames:</strong>
+lmms-eval package repo /lmms-eval/models/llava-onevision.py -> token_strategy = "single" or "multiple
+
+<strong>Use different r values for global or local:</strong>
+(this uses a fixed keep ratio for global tokens and calculates a keep ratio for local tokens to get to the set total ratio)
+src/LLaVA/llava/model/language_model/fastv_kvcache.py --> total_ratio, global_ratio, USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = True
+
+<strong>Calculate num global/local tokens kept and average attention per global/local token</strong>
+CALCULATE_NUM_KEPT_TOKENS = True
+CALCULATE_ATTENTION_AVERAGES = True
+
+
+<strong>k values and total/global r values</strong>
+src/LLaVA/lmms-evals.sh -> declare -a pairs=(...); pairs have order (k, total_ratio, global_ratio
+
+<strong>Model to use</strong>
+Path to model is defined in src/LLaVA/lmms-evals.sh
+
+<strong>Benchmarks</strong>
+benchmarks can be defined in src/LLaVA/lmms-evals.sh
+
+<br>
+<br>
+
 <h1 align="center">FastV</h1>
 
 <p align="center">
