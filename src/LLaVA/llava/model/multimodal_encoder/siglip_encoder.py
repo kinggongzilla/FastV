@@ -167,11 +167,14 @@ class SigLipVisionEmbeddings(nn.Module):
         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)), persistent=False)
 
     def forward(self, pixel_values: torch.FloatTensor) -> torch.Tensor:
-        patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
+        patch_embeds = self.patch_embedding(pixel_values)  # pixel_values (7, 3, 384, 384) patch_embeds  [7, 1152, 27, 27]
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
 
-        self.position_ids = self.position_ids.to('cuda')
-        embeddings = embeddings + self.position_embedding(self.position_ids)
+        self.position_ids = self.position_ids.to('cuda') #  (1, 729)
+        # try:
+        embeddings = embeddings + self.position_embedding(self.position_ids) # embeddings 1152, 27, 27      second operant  1, 729, 1152
+        # except RuntimeError:
+        #     pass
         return embeddings
 
 

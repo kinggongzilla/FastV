@@ -14,18 +14,24 @@ CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
 
+SAMPLING_MODE = "FastV"
+
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
-K = 1
-total_ratio = 0.25
-global_ratio = 0.25
+K = 2
+total_ratio = 0.1
+global_ratio = 0.1
+# K = 100
+# total_ratio = 1
+# global_ratio = 1
+
 num_global_image_tokens = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
 num_global_local_tokens_kept = {}
 
 class FastVModelMixin:
     """
-    A Mixin (or base class) containing the shared forward logic for 
+    A Mixin (or base class) containing the shared forward logic for
     both FastVLlamaModel and FastVQwen2Model.
     """
 
@@ -132,7 +138,7 @@ class FastVModelMixin:
                     use_cache,
                 )
             else:
-                # image pruning logic
+                # !!!!!!!!!1 image pruning logic !!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 if (
                     decoder_layer.self_attn.layer_idx == K
                     and seq_length > 1
@@ -147,7 +153,7 @@ class FastVModelMixin:
                     for image_start_index in image_start_indices:
                         global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
 
-                        if USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
+                        if SAMPLING_MODE == 'FastV' and USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
                                 global_start_index : global_end_index
@@ -173,10 +179,27 @@ class FastVModelMixin:
                             # append indices of top global and local image tokens
                             keep_indices.append(top_attention_rank_index_global)
                             keep_indices.append(top_attention_rank_index_local)
-                        else:
+
+                        elif SAMPLING_MODE == 'Uniform':
+                            # uniformly sample R(%) of tokens from global and from local
+                            step_size = int(1 / total_ratio)
+                            # keep_indices.append( torch.arange(global_start_index, global_end_index,  step_size, device=device ) ) # uniform sampling in global tokens
+                            # keep_indices.append( torch.arange(local_start_index, local_end_index, step_size , device=device)) # uniform sampling in local tokens
+                            keep_indices.append( torch.arange(global_start_index, local_end_index,  step_size, device=device ) )
+                        elif SAMPLING_MODE == 'Random': # !!! this has not been adapted for video benchmarks yet
+                            n_global_tokens_to_keep = int(num_global_image_tokens * total_ratio)
+                            n_local_tokens_to_keep = int(num_local_image_tokens * total_ratio)
+                            global_indx = torch.randperm( num_global_image_tokens )[: n_global_tokens_to_keep]
+                            local_indx = torch.randperm(num_local_image_tokens)[: n_local_tokens_to_keep]
+                            keep_indices.append( torch.arange(global_start_index, global_end_index,  device=device )[global_indx] )
+                            keep_indices.append( torch.arange(local_start_index, local_end_index,   device=device )[local_indx] )
+
+
+
+                        elif SAMPLING_MODE == 'FastV':
                             # compute mean attention
                             image_attention_score = self.last_attention.mean(dim=1)[0][-1][
-                                image_start_index : image_start_index + num_image_tokens_per_image
+                                image_start_index : image_start_index + num_image_tokens_per_image # for video,  num_image_tokens_per_image is the total number of visual tokens for all frames
                             ]
                             # pick top ratio of them
                             top_attention_rank_index = (
@@ -190,7 +213,7 @@ class FastVModelMixin:
                                 num_global_tokens_kept = ((top_attention_rank_index >= global_start_index) & (top_attention_rank_index < global_end_index)).sum().item()
                                 num_local_tokens_kept = ((top_attention_rank_index >= local_start_index) & (top_attention_rank_index < local_end_index)).sum().item()
                                 num_tokens_kept = self._load_json_file(f'{LOGS_DIR}/num_tokens.json')
-                                
+
                                 layer_idx_str = str(decoder_layer.self_attn.layer_idx)
 
                                 # Check if the outer key exists, if not, initialize it with an empty dictionary
@@ -216,14 +239,15 @@ class FastVModelMixin:
                                 num_tokens_kept[layer_idx_str]['local']['num_tokens_total'].append(num_local_image_tokens)
 
                                 self._save_json_file(num_tokens_kept, f'{LOGS_DIR}/num_tokens.json')
-
+                        else:
+                            raise ValueError(f'Unrecognized sampling mode {SAMPLING_MODE}')
                     # add non-image tokens
-                    keep_indices.append(torch.arange(0, image_start_indices[0], device=device))
+                    keep_indices.append(torch.arange(0, image_start_indices[0], device=device)) # system prompt text token
                     keep_indices.append(torch.arange(
                         image_start_indices[-1] + num_image_tokens_per_image,
                         seq_length,
                         device=device
-                    ))
+                    ))  #  question text token
 
                     keep_indices = torch.cat(keep_indices).sort().values
 
@@ -251,17 +275,17 @@ class FastVModelMixin:
                         use_cache=use_cache,
                     )
 
-                elif decoder_layer.self_attn.layer_idx == K - 1:
-                    # capture the attention weights for next layer
+                elif SAMPLING_MODE == 'FastV' and decoder_layer.self_attn.layer_idx == K - 1 :
+                    # calculate the attention weights for next layer
                     temp_layer_outputs = decoder_layer(
                         hidden_states,
                         attention_mask=attention_mask,
                         position_ids=position_ids,
                         past_key_value=past_key_values,
-                        output_attentions=True,
+                        output_attentions=True,   #  output attention set to True
                         use_cache=use_cache,
                     )
-                    self.last_attention = temp_layer_outputs[1]
+                    self.last_attention = temp_layer_outputs[1] #  (1, 28, 5389, 5389)
                     layer_outputs = temp_layer_outputs
                 else:
                     if CALCULATE_ATTENTION_AVERAGES and decoder_layer.self_attn.layer_idx > 0 :
@@ -325,11 +349,11 @@ class FastVModelMixin:
                         attention_mask=attention_mask,
                         position_ids=position_ids,
                         past_key_value=past_key_values,
-                        output_attentions=output_attentions,
+                        output_attentions=output_attentions,  # output_attention set to False
                         use_cache=use_cache,
                     )
 
-            hidden_states = layer_outputs[0]
+            hidden_states = layer_outputs[0] # (bz, seq_len, feat_dim)  1, 5389, 3584
 
             # handle caching
             if use_cache:
@@ -360,7 +384,7 @@ class FastVModelMixin:
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
-    
+
     def _save_json_file(self, dict, file_path):
         """
         Save the dictionary to a JSON file.
@@ -619,10 +643,4 @@ def _prepare_4d_causal_attention_mask_for_sdpa(
 
         # Attend to all tokens in masked rows from the causal_mask, for example the relevant first rows when
         # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
-        # Details: https://github.com/pytorch/pytorch/issues/110213
-        if not is_tracing and expanded_4d_mask.device.type == "cuda":
-            expanded_4d_mask = AttentionMaskConverter._unmask_unattended(
-                expanded_4d_mask, min_dtype=torch.finfo(inputs_embeds.dtype).min
-            )
-
-    return expanded_4d_mask
+        # Details: https://github.com/pyto

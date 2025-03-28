@@ -93,7 +93,7 @@ class LlavaMetaModel:
         self.config.mm_vision_select_feature = mm_vision_select_feature
         self.config.mm_patch_merge_type = mm_patch_merge_type
 
-        
+
         if not hasattr(self.config, 'add_faster_video'):
             if model_args.add_faster_video:
                 embed_std = 1 / torch.sqrt(torch.tensor(self.config.hidden_size, dtype=self.dtype))
@@ -194,7 +194,7 @@ class LlavaMetaForCausalLM(ABC):
         # image_features = self.get_model().vision_resampler(image_features, images=images)
         image_features = self.get_model().mm_projector(image_features)
         return image_features
-    
+
     def encode_multimodals(self, videos_or_images, video_idx_in_batch, split_sizes=None):
         videos_or_images_features = self.get_model().get_vision_tower()(videos_or_images)
         per_videos_or_images_features = torch.split(videos_or_images_features, split_sizes, dim=0)  # tuple, (dim_1, 576, 4096)
@@ -203,7 +203,7 @@ class LlavaMetaForCausalLM(ABC):
         cur_mm_spatial_pool_stride = self.config.mm_spatial_pool_stride
 
         for idx, feat in enumerate(per_videos_or_images_features):
-            
+
             feat = self.get_model().mm_projector(feat)
             faster_video_feature = 0
             slower_img_feat = 0
@@ -285,7 +285,7 @@ class LlavaMetaForCausalLM(ABC):
             image_features = []
             for idx, image_feat in enumerate(encoded_image_features):
                 # len(encoded_image_features) > len(video_idx_in_batch) is for case where one image placeholder is passed for each frame
-                if idx in video_idx_in_batch or len(encoded_image_features) > len(video_idx_in_batch):
+                if idx in video_idx_in_batch or (len(encoded_image_features) > len(video_idx_in_batch) and len(video_idx_in_batch) != 0 ):
                     image_features.append(self.get_2dPool(image_feat))
                 else:
                     image_features.append(image_feat)
@@ -325,14 +325,14 @@ class LlavaMetaForCausalLM(ABC):
                                         concat_slow_fater_token.append(torch.cat((faster_video_feature[_], self.model.faster_token[None].to(image_feature.device)), dim=0))
                                 # import pdb; pdb.set_trace()
                                 image_feature = torch.cat(concat_slow_fater_token)
-                        
+
                             new_image_features.append(image_feature)
                         elif mm_newline_position == "frame":
                             # Frame-wise
                             image_feature = self.add_token_per_frame(image_feature)
 
                             new_image_features.append(image_feature.flatten(0, 1))
-                            
+
                         elif mm_newline_position == "one_token":
                             # one-token
                             image_feature = image_feature.flatten(0, 1)
@@ -341,7 +341,7 @@ class LlavaMetaForCausalLM(ABC):
                                     image_feature,
                                     self.model.image_newline[None].to(image_feature.device)
                                 ), dim=0)
-                            new_image_features.append(image_feature)      
+                            new_image_features.append(image_feature)
                         elif mm_newline_position == "no_token":
                             new_image_features.append(image_feature.flatten(0, 1))
                         else:
@@ -462,7 +462,7 @@ class LlavaMetaForCausalLM(ABC):
                 continue
 
             image_token_indices = [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
-            
+
             # Begin David Code
             image_token_indices_for_each_batch.append(image_token_indices)
             # End David Code
