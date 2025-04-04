@@ -7,27 +7,32 @@ from transformers.models.llama import LlamaConfig
 from transformers import Qwen2Config, Qwen2Model
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from typing import List, Optional, Tuple, Union
+import numpy as np
 import os
 import json
 
 CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
+DYNAMIC_PRUNING = True
 
-SAMPLING_MODE = "FastV"
+SAMPLING_MODE = "Random"
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
 K = 2
-total_ratio = 0.1
-global_ratio = 0.1
-# K = 100
-# total_ratio = 1
-# global_ratio = 1
+total_ratio = 0.5
+global_ratio = 0.5
 
-num_global_image_tokens = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
+num_global_image_tokens_llava_ov = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
 num_global_local_tokens_kept = {}
+
+def linear(x): return x
+def quadratic(x): return ((x) ** 2)  # Scaled to reach 1024 at x=32
+def logarithmic(x): return np.log(x+1) if x >= 0 else 0  # Natural log
+
+prune_ratio_func: Callable = quadratic
 
 class FastVModelMixin:
     """
@@ -121,7 +126,7 @@ class FastVModelMixin:
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
-
+        num_image_tokens_before_pruning = num_image_tokens_per_image
         # run through layers
         for idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
@@ -138,12 +143,15 @@ class FastVModelMixin:
                     use_cache,
                 )
             else:
-                # !!!!!!!!!1 image pruning logic !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                # !!!!!!!!!1 image pruning logic !!!!!!!!!!!!!!!!!!!!!!!!!!!!                    
                 if (
-                    decoder_layer.self_attn.layer_idx == K
-                    and seq_length > 1
+                    seq_length > 1
                     and image_token_indices_for_each_batch is not None
+                ) and (
+                    decoder_layer.self_attn.layer_idx == K 
+                    or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
                 ):
+                    total_ratio = self._calc_keep_ratio_for_layer(prune_ratio_func, decoder_layer.self_attn.layer_idx, K=K, min_keep_ratio=0)
                     device = hidden_states.device
 
                     # Start indices, ignoring the first and last
@@ -151,7 +159,8 @@ class FastVModelMixin:
 
                     keep_indices = []
                     for image_start_index in image_start_indices:
-                        global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
+                        # attention! num_global_image_tokens becomes less than num_global_image_tokens_llava_ov for very strong pruning!
+                        num_global_image_tokens, global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_before_pruning, num_global_image_tokens_llava_ov, image_start_index)
 
                         if SAMPLING_MODE == 'FastV' and USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
                             # compute mean attention of global image tokens
@@ -185,25 +194,28 @@ class FastVModelMixin:
                             step_size = int(1 / total_ratio)
                             # keep_indices.append( torch.arange(global_start_index, global_end_index,  step_size, device=device ) ) # uniform sampling in global tokens
                             # keep_indices.append( torch.arange(local_start_index, local_end_index, step_size , device=device)) # uniform sampling in local tokens
-                            keep_indices.append( torch.arange(global_start_index, local_end_index,  step_size, device=device ) )
+                            indices = torch.arange(global_start_index, local_end_index,  step_size, device=device )
+                            num_image_tokens_after_pruning = len(indices)
+                            keep_indices.append(indices)
+
                         elif SAMPLING_MODE == 'Random': # !!! this has not been adapted for video benchmarks yet
                             n_global_tokens_to_keep = int(num_global_image_tokens * total_ratio)
                             n_local_tokens_to_keep = int(num_local_image_tokens * total_ratio)
+                            num_image_tokens_after_pruning = n_global_tokens_to_keep + n_local_tokens_to_keep
                             global_indx = torch.randperm( num_global_image_tokens )[: n_global_tokens_to_keep]
                             local_indx = torch.randperm(num_local_image_tokens)[: n_local_tokens_to_keep]
                             keep_indices.append( torch.arange(global_start_index, global_end_index,  device=device )[global_indx] )
                             keep_indices.append( torch.arange(local_start_index, local_end_index,   device=device )[local_indx] )
 
-
-
                         elif SAMPLING_MODE == 'FastV':
                             # compute mean attention
                             image_attention_score = self.last_attention.mean(dim=1)[0][-1][
-                                image_start_index : image_start_index + num_image_tokens_per_image # for video,  num_image_tokens_per_image is the total number of visual tokens for all frames
+                                image_start_index : image_start_index + num_image_tokens_before_pruning # for video,  num_image_tokens_before_pruning is the total number of visual tokens for all frames
                             ]
                             # pick top ratio of them
+                            num_image_tokens_after_pruning = int(num_image_tokens_before_pruning * total_ratio)
                             top_attention_rank_index = (
-                                image_attention_score.topk(int(num_image_tokens_per_image * total_ratio)).indices
+                                image_attention_score.topk(num_image_tokens_after_pruning).indices
                                 + image_start_index
                             )
                             keep_indices.append(top_attention_rank_index)
@@ -241,11 +253,14 @@ class FastVModelMixin:
                                 self._save_json_file(num_tokens_kept, f'{LOGS_DIR}/num_tokens.json')
                         else:
                             raise ValueError(f'Unrecognized sampling mode {SAMPLING_MODE}')
+                    
+                    print(f"remaining visual tokens in layer {decoder_layer.self_attn.layer_idx}: {torch.cat(keep_indices).shape}")
+
                     # add non-image tokens
                     keep_indices.append(torch.arange(0, image_start_indices[0], device=device)) # system prompt text token
                     keep_indices.append(torch.arange(
-                        image_start_indices[-1] + num_image_tokens_per_image,
-                        seq_length,
+                        image_start_indices[-1] + num_image_tokens_before_pruning,
+                        hidden_states.shape[1],
                         device=device
                     ))  #  question text token
 
@@ -253,6 +268,8 @@ class FastVModelMixin:
 
                     # filter hidden states
                     hidden_states = hidden_states[:, keep_indices, :]
+
+                    num_image_tokens_before_pruning = num_image_tokens_after_pruning
 
                     # adjust attention mask
                     if attention_mask is not None:
@@ -275,7 +292,7 @@ class FastVModelMixin:
                         use_cache=use_cache,
                     )
 
-                elif SAMPLING_MODE == 'FastV' and decoder_layer.self_attn.layer_idx == K - 1 :
+                elif SAMPLING_MODE == 'FastV' and decoder_layer.self_attn.layer_idx == K - 1 and seq_length > 1:
                     # calculate the attention weights for next layer
                     temp_layer_outputs = decoder_layer(
                         hidden_states,
@@ -303,7 +320,8 @@ class FastVModelMixin:
                         avg_attentions = self._load_json_file(f'{LOGS_DIR}/avg_attentions.json')
                         image_start_indices = image_token_indices_for_each_batch[0][1:-1]
                         for image_start_index in image_start_indices:
-                            global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_per_image, num_global_image_tokens, image_start_index)
+                            # attention! num_global_image_tokens becomes less than num_global_image_tokens_llava_ov for very strong pruning!
+                            num_global_image_tokens, global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_before_pruning, num_global_image_tokens_llava_ov, image_start_index)
 
                             # compute mean attention of global image tokens
                             image_attention_score_global = self.last_attention.mean(dim=1)[0][-1][
@@ -339,7 +357,9 @@ class FastVModelMixin:
 
                         self._save_json_file(avg_attentions, f'{LOGS_DIR}/avg_attentions.json')
 
-                    if decoder_layer.self_attn.layer_idx == K and position_ids.shape[1] == 1:
+                    if decoder_layer.self_attn.layer_idx == K or (
+                        DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K
+                        ) and position_ids.shape[1] == 1:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
                         # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
 
@@ -407,24 +427,27 @@ class FastVModelMixin:
 
     def _calculate_image_token_indices(
         self,
-        num_image_tokens_per_image,
+        num_image_tokens_before_pruning,
         num_global_image_tokens,
         image_start_index,
     ):
+        if num_image_tokens_before_pruning < num_global_image_tokens:
+            num_global_image_tokens = num_image_tokens_before_pruning
         # Define global and local image token indices
-        num_local_image_tokens = num_image_tokens_per_image - num_global_image_tokens
+        num_local_image_tokens = num_image_tokens_before_pruning - num_global_image_tokens
         global_start_index = image_start_index
         global_end_index = image_start_index + num_global_image_tokens
         local_start_index = global_end_index
-        local_end_index = image_start_index + num_image_tokens_per_image
+        local_end_index = image_start_index + num_image_tokens_before_pruning
 
         # Calculate ratio_local
-        total_tokens_to_drop = total_ratio * num_image_tokens_per_image
+        total_tokens_to_drop = total_ratio * num_image_tokens_before_pruning
         global_tokens_to_drop = global_ratio * num_global_image_tokens
         local_tokens_to_drop = max(0, total_tokens_to_drop - global_tokens_to_drop)
         ratio_local = local_tokens_to_drop / num_local_image_tokens if num_local_image_tokens > 0 else 0
 
         return (
+            num_global_image_tokens,
             global_start_index,
             global_end_index,
             local_start_index,
@@ -432,6 +455,23 @@ class FastVModelMixin:
             ratio_local,
             num_local_image_tokens
         )
+
+    def _calc_keep_ratio_for_layer(self, f, layer_idx: int, K: int=0, min_keep_ratio: int = 0):
+        #Note that K is the delay after how many layers pruning should start
+        total_layers = 32
+        layer_idx = layer_idx - K
+        cumulative_keep_ratio = 1
+        layer_prune_ratio = (f(layer_idx + 1) - f(layer_idx)) / f(total_layers+1)# denominator normalizes values to (0,1)
+        layer_keep_ratio = 1 - layer_prune_ratio
+        
+        # calculate the overall percentage of tokens pruned
+        for i in range(0,layer_idx+1):
+            cumulative_keep_ratio -= cumulative_keep_ratio * layer_keep_ratio
+        
+        # Keep all remaining tokens if min_keep_ratio
+        if cumulative_keep_ratio < min_keep_ratio:
+            return min_keep_ratio 
+        return layer_keep_ratio
 
 class FastVLlamaModel(LlamaModel, FastVModelMixin):
     def __init__(self, config: LlamaConfig):
