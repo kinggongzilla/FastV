@@ -29,10 +29,10 @@ avg_attentions = {}
 num_global_local_tokens_kept = {}
 
 def linear(x): return x
-def quadratic(x): return ((x) ** 2)  # Scaled to reach 1024 at x=32
+def quadratic(x): return ((x) ** 2)  
 def logarithmic(x): return np.log(x+1) if x >= 0 else 0  # Natural log
 
-prune_ratio_func: Callable = quadratic
+prune_ratio_func: Callable = linear
 
 class FastVModelMixin:
     """
@@ -151,7 +151,7 @@ class FastVModelMixin:
                     decoder_layer.self_attn.layer_idx == K 
                     or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
                 ):
-                    total_ratio = self._calc_keep_ratio_for_layer(prune_ratio_func, decoder_layer.self_attn.layer_idx, K=K, min_keep_ratio=0)
+                    total_ratio, _ = self._calc_keep_ratio_for_layer(prune_ratio_func, decoder_layer.self_attn.layer_idx, K=K, min_keep_ratio=0)
                     device = hidden_states.device
 
                     # Start indices, ignoring the first and last
@@ -268,6 +268,7 @@ class FastVModelMixin:
 
                     # filter hidden states
                     hidden_states = hidden_states[:, keep_indices, :]
+                    print(f"hidden_states fastkv_cache.py size: {hidden_states.shape}")
 
                     num_image_tokens_before_pruning = num_image_tokens_after_pruning
 
@@ -460,18 +461,21 @@ class FastVModelMixin:
         #Note that K is the delay after how many layers pruning should start
         total_layers = 32
         layer_idx = layer_idx - K
+        if layer_idx < 0:
+            return 1, 1
         cumulative_keep_ratio = 1
-        layer_prune_ratio = (f(layer_idx + 1) - f(layer_idx)) / f(total_layers+1)# denominator normalizes values to (0,1)
+        # layer_prune_ratio = (f(layer_idx + 1) - f(layer_idx)) / f(total_layers+1)# denominator normalizes values to (0,1)
+        layer_prune_ratio = f(layer_idx) / f(total_layers)# denominator normalizes values to (0,1)
         layer_keep_ratio = 1 - layer_prune_ratio
         
         # calculate the overall percentage of tokens pruned
         for i in range(0,layer_idx+1):
-            cumulative_keep_ratio -= cumulative_keep_ratio * layer_keep_ratio
-        
+            cumulative_keep_ratio *= layer_keep_ratio
+
         # Keep all remaining tokens if min_keep_ratio
         if cumulative_keep_ratio < min_keep_ratio:
-            return min_keep_ratio 
-        return layer_keep_ratio
+            return min_keep_ratio, min_keep_ratio
+        return layer_keep_ratio, cumulative_keep_ratio
 
 class FastVLlamaModel(LlamaModel, FastVModelMixin):
     def __init__(self, config: LlamaConfig):
