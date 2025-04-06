@@ -14,15 +14,15 @@ import json
 CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
-DYNAMIC_PRUNING = True
+DYNAMIC_PRUNING = False
 
 SAMPLING_MODE = "Random"
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
-K = 2
-total_ratio = 0.5
-global_ratio = 0.5
+K = 5
+total_ratio = 0
+global_ratio = 0
 min_keep_ratio = 0.2
 
 num_global_image_tokens_llava_ov = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
@@ -153,8 +153,9 @@ class FastVModelMixin:
                     decoder_layer.self_attn.layer_idx == K 
                     or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
                 ):
-                    keep_ratios = self._calc_individual_keep_ratios(prune_ratio_func, len(self.layers), K=K, min_keep_ratio=min_keep_ratio)
-                    total_ratio = keep_ratios[decoder_layer.self_attn.layer_idx]
+                    if DYNAMIC_PRUNING:
+                        keep_ratios = self._calc_individual_keep_ratios(prune_ratio_func, len(self.layers), K=K, min_keep_ratio=min_keep_ratio)
+                        total_ratio = keep_ratios[decoder_layer.self_attn.layer_idx]
                     device = hidden_states.device
 
                     # Start indices, ignoring the first and last
