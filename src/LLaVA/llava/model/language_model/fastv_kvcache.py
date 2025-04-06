@@ -23,16 +23,18 @@ LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 K = 2
 total_ratio = 0.5
 global_ratio = 0.5
+min_keep_ratio = 0.2
 
 num_global_image_tokens_llava_ov = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
 num_global_local_tokens_kept = {}
 
-def linear(x): return x
-def quadratic(x): return ((x) ** 2)  
-def logarithmic(x): return np.log(x+1) if x >= 0 else 0  # Natural log
+def linear(x, T): return x / T
+def quadratic(x, T): return (x ** 2) / (T ** 2)
+def logarithmic(x, T): return np.log(x + 1) / np.log(T + 1)
+def keep_r_at_k(x, r): return (1 - r) if x > 0 else 0  # Returns prune ratio
 
-prune_ratio_func: Callable = linear
+prune_ratio_func: Callable = logarithmic
 
 class FastVModelMixin:
     """
@@ -151,7 +153,8 @@ class FastVModelMixin:
                     decoder_layer.self_attn.layer_idx == K 
                     or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
                 ):
-                    total_ratio, _ = self._calc_keep_ratio_for_layer(prune_ratio_func, decoder_layer.self_attn.layer_idx, K=K, min_keep_ratio=0)
+                    keep_ratios = self._calc_individual_keep_ratios(prune_ratio_func, len(self.layers), K=K, min_keep_ratio=min_keep_ratio)
+                    total_ratio = keep_ratios[decoder_layer.self_attn.layer_idx]
                     device = hidden_states.device
 
                     # Start indices, ignoring the first and last
@@ -457,25 +460,28 @@ class FastVModelMixin:
             num_local_image_tokens
         )
 
-    def _calc_keep_ratio_for_layer(self, f, layer_idx: int, K: int=0, min_keep_ratio: int = 0):
-        #Note that K is the delay after how many layers pruning should start
-        total_layers = 32
-        layer_idx = layer_idx - K
+    def _calc_cumulative_keep_ratio(self, f, total_layers, layer_idx: int, K: int=0, min_keep_ratio: float = 0):
+        """Calculate cumulative keep ratio at a given layer."""
+        layer_idx = layer_idx - (K-1)
         if layer_idx < 0:
-            return 1, 1
-        cumulative_keep_ratio = 1
-        # layer_prune_ratio = (f(layer_idx + 1) - f(layer_idx)) / f(total_layers+1)# denominator normalizes values to (0,1)
-        layer_prune_ratio = f(layer_idx) / f(total_layers)# denominator normalizes values to (0,1)
-        layer_keep_ratio = 1 - layer_prune_ratio
-        
-        # calculate the overall percentage of tokens pruned
-        for i in range(0,layer_idx+1):
-            cumulative_keep_ratio *= layer_keep_ratio
+            return 1.0
+        layer_prune_ratio = f(layer_idx, total_layers)
+        cumulative_layer_keep_ratio = 1 - layer_prune_ratio
+        return max(cumulative_layer_keep_ratio, min_keep_ratio)
 
-        # Keep all remaining tokens if min_keep_ratio
-        if cumulative_keep_ratio < min_keep_ratio:
-            return min_keep_ratio, min_keep_ratio
-        return layer_keep_ratio, cumulative_keep_ratio
+    def _calc_individual_keep_ratios(self, f, total_layers, K=0, min_keep_ratio=0):
+        """Calculate individual keep ratios from cumulative ratios."""
+        individual_keep = []
+        prev_cumulative = 1.0
+        
+        for layer in range(total_layers):
+            current_cumulative = self._calc_cumulative_keep_ratio(f, total_layers, layer, K, min_keep_ratio)
+            r_k = current_cumulative / prev_cumulative if prev_cumulative > 0 else 0.0
+            r_k = max(r_k, min_keep_ratio)
+            individual_keep.append(r_k)
+            prev_cumulative = current_cumulative
+        
+        return individual_keep
 
 class FastVLlamaModel(LlamaModel, FastVModelMixin):
     def __init__(self, config: LlamaConfig):
