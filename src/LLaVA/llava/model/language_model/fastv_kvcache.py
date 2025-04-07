@@ -15,19 +15,26 @@ import json
 CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
-DYNAMIC_PRUNING = False
+DYNAMIC_PRUNING = True
 
 
-SAMPLING_MODE = "Uniform"
+
+SAMPLING_MODE = "Random"
+
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
 
-K = 100
-total_ratio = 1
-global_ratio = 1
-min_keep_ratio = 0.2
 
+K = 0
+total_ratio = 0
+global_ratio = 0
+min_keep_ratio = 0.0
+
+
+# Only used for dynamic pruning with keep_r_at_k function
+r_list = [0.5, 0.3, 0]  # Keep ratios
+k_list = [5, 15, 20]      # Layer indices where these apply. ATTENTION. These are *added* the the K value defined above
 
 num_global_image_tokens_llava_ov = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
@@ -36,9 +43,34 @@ num_global_local_tokens_kept = {}
 def linear(x, T): return x / T
 def quadratic(x, T): return (x ** 2) / (T ** 2)
 def logarithmic(x, T): return np.log(x + 1) / np.log(T + 1)
-def keep_r_at_k(x, r): return (1 - r) if x > 0 else 0  # Returns prune ratio
+def prune_r_at_k(x, T):
+    """Returns prune ratio at layer x based on specified r and k thresholds.
+    Args:
+        x: Current layer index
+    Returns:
+        Prune ratio (1 - keep_ratio) for the given layer
+    """
+    # Ensure the thresholds are in ascending order
+    sorted_indices = np.argsort(k_list)
+    k_list_sorted = np.array(k_list)[sorted_indices]
+    r_list_sorted = np.array(r_list)[sorted_indices]
 
-prune_ratio_func: Callable = logarithmic
+    # If before first threshold, no pruning (keep ratio = 1.0)
+    if x <= k_list_sorted[0]:  # Changed from < to <=
+        return 0.0
+
+    # Iterate through thresholds to find the correct range
+    for i in range(len(k_list_sorted)):
+        if x > k_list_sorted[i]:  # Changed to > instead of >=
+            # If this is the last threshold or x is <= the next one
+            if i == len(k_list_sorted)-1 or x <= k_list_sorted[i+1]:
+                return 1 - r_list_sorted[i]
+
+    # Default case (shouldn't reach here)
+    return 1 - r_list_sorted[-1]
+
+prune_ratio_func: Callable = prune_r_at_k
+# prune_ratio_func: Callable = logarithmic
 
 class FastVModelMixin:
     """
