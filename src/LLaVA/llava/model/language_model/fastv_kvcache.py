@@ -18,14 +18,14 @@ USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
 DYNAMIC_PRUNING = False
 
 
-SAMPLING_MODE = "HiddenStatesNormL1" # Uniform, Random, FastV, HiddenStatesNormL1, HiddenStatesNormL2
+SAMPLING_MODE = "Uniform"
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
 
-K = 2
-total_ratio = 0.5
-global_ratio = 0
+K = 100
+total_ratio = 1
+global_ratio = 1
 min_keep_ratio = 0.2
 
 
