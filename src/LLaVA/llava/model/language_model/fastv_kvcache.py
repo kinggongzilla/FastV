@@ -16,12 +16,12 @@ CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
 DYNAMIC_PRUNING = False
 
-SAMPLING_MODE = "Random"
+SAMPLING_MODE = "HiddenStatesNormL1" # Uniform, Random, FastV, HiddenStatesNormL1, HiddenStatesNormL2
 
-LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
+LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs" 
 
-K = 5
-total_ratio = 0
+K = 2
+total_ratio = 0.5
 global_ratio = 0
 min_keep_ratio = 0.2
 
@@ -154,6 +154,7 @@ class FastVModelMixin:
                     or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
                 ):
                     if DYNAMIC_PRUNING:
+                        global total_ratio 
                         keep_ratios = self._calc_individual_keep_ratios(prune_ratio_func, len(self.layers), K=K, min_keep_ratio=min_keep_ratio)
                         total_ratio = keep_ratios[decoder_layer.self_attn.layer_idx]
                     device = hidden_states.device
@@ -255,10 +256,20 @@ class FastVModelMixin:
                                 num_tokens_kept[layer_idx_str]['local']['num_tokens_total'].append(num_local_image_tokens)
 
                                 self._save_json_file(num_tokens_kept, f'{LOGS_DIR}/num_tokens.json')
+                        elif SAMPLING_MODE.startswith('HiddenStatesNorm'):
+                            if SAMPLING_MODE.endswith('L1'):
+                                norms = torch.norm(hidden_states, dim=2, p=1)
+                            elif SAMPLING_MODE.endswith('L2'):
+                                norms = torch.norm(hidden_states, dim=2, p=2)
+                            else:
+                                raise ValueError('When using hidden state sampling SAMPLING_MODE has to be HiddenStatesNormL1 or HiddenStatesNormL2')
+                            num_image_tokens_after_pruning = int(num_image_tokens_before_pruning * total_ratio)
+                            top_norm_indices = norms.topk(num_image_tokens_after_pruning, dim=1).indices.squeeze()
+                            keep_indices.append(top_norm_indices)
                         else:
                             raise ValueError(f'Unrecognized sampling mode {SAMPLING_MODE}')
                     
-                    print(f"remaining visual tokens in layer {decoder_layer.self_attn.layer_idx}: {torch.cat(keep_indices).shape}")
+                    # print(f"remaining visual tokens in layer {decoder_layer.self_attn.layer_idx}: {torch.cat(keep_indices).shape}")
 
                     # add non-image tokens
                     keep_indices.append(torch.arange(0, image_start_indices[0], device=device)) # system prompt text token
@@ -272,7 +283,7 @@ class FastVModelMixin:
 
                     # filter hidden states
                     hidden_states = hidden_states[:, keep_indices, :]
-                    print(f"hidden_states fastkv_cache.py size: {hidden_states.shape}")
+                    # print(f"hidden_states fastkv_cache.py size: {hidden_states.shape}")
 
                     num_image_tokens_before_pruning = num_image_tokens_after_pruning
 
