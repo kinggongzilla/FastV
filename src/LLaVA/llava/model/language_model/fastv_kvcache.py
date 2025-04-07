@@ -23,15 +23,14 @@ SAMPLING_MODE = "Random"
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
 
-K = 2
-total_ratio = 0.5
-global_ratio = 0.5
-min_keep_ratio = 0.2
+K = 0
+total_ratio = 0
+global_ratio = 0
+min_keep_ratio = 0.0
 
 # Only used for dynamic pruning with keep_r_at_k function
 r_list = [0.5, 0.3, 0]  # Keep ratios
-k_list = [5, 15, 20]      # Layer indices where these apply
-
+k_list = [5, 15, 20]      # Layer indices where these apply. ATTENTION. These are *added* the the K value defined above
 
 num_global_image_tokens_llava_ov = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
@@ -42,10 +41,8 @@ def quadratic(x, T): return (x ** 2) / (T ** 2)
 def logarithmic(x, T): return np.log(x + 1) / np.log(T + 1)
 def prune_r_at_k(x, T):
     """Returns prune ratio at layer x based on specified r and k thresholds.
-    
     Args:
         x: Current layer index
-        
     Returns:
         Prune ratio (1 - keep_ratio) for the given layer
     """
@@ -54,12 +51,18 @@ def prune_r_at_k(x, T):
     k_list_sorted = np.array(k_list)[sorted_indices]
     r_list_sorted = np.array(r_list)[sorted_indices]
     
+    # If before first threshold, no pruning (keep ratio = 1.0)
+    if x <= k_list_sorted[0]:  # Changed from < to <=
+        return 0.0
+    
     # Iterate through thresholds to find the correct range
     for i in range(len(k_list_sorted)):
-        if x < k_list_sorted[i]:
-            return 1 - r_list_sorted[i]
+        if x > k_list_sorted[i]:  # Changed to > instead of >=
+            # If this is the last threshold or x is <= the next one
+            if i == len(k_list_sorted)-1 or x <= k_list_sorted[i+1]:
+                return 1 - r_list_sorted[i]
     
-    # If x is beyond all thresholds, use the last r value
+    # Default case (shouldn't reach here)
     return 1 - r_list_sorted[-1]
 
 prune_ratio_func: Callable = prune_r_at_k
@@ -317,7 +320,7 @@ class FastVModelMixin:
 
                     # filter hidden states
                     hidden_states = hidden_states[:, keep_indices, :]
-                    print(f"hidden_states fastkv_cache.py size: {hidden_states.shape}")
+                    # print(f"hidden_states fastkv_cache.py size: {hidden_states.shape}")
 
                     num_image_tokens_before_pruning = num_image_tokens_after_pruning
 
