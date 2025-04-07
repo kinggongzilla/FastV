@@ -1295,6 +1295,7 @@ class GenerationMixin:
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         num_image_tokens_per_image=None, 
         image_token_indices_for_each_batch=None,
+            visual = None,
         **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor]:
         r"""
@@ -1589,6 +1590,7 @@ class GenerationMixin:
                 streamer=streamer,
                 num_image_tokens_per_image=num_image_tokens_per_image,
                 image_token_indices_for_each_batch=image_token_indices_for_each_batch,
+                visual = visual,
                 **model_kwargs,
             )
 
@@ -2330,6 +2332,7 @@ class GenerationMixin:
         streamer: Optional["BaseStreamer"] = None,
         num_image_tokens_per_image=None, 
         image_token_indices_for_each_batch=None,
+            visual = None,
         **model_kwargs,
     ) -> Union[GenerateNonBeamOutput, torch.LongTensor]:
         r"""
@@ -2511,6 +2514,7 @@ class GenerationMixin:
                 output_hidden_states=output_hidden_states,
                 num_image_tokens_per_image=num_image_tokens_per_image, 
                 image_token_indices_for_each_batch=image_token_indices_for_each_batch,
+                visual=visual,
             )
 
             if synced_gpus and this_peer_finished:

@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from typing import Tuple, Callable
 from transformers import AutoConfig
@@ -14,13 +15,13 @@ CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
 
-SAMPLING_MODE = "FastV"
+SAMPLING_MODE = "Uniform"
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
-K = 2
-total_ratio = 0.1
-global_ratio = 0.1
+K = 27
+total_ratio = 0
+global_ratio = 0
 # K = 100
 # total_ratio = 1
 # global_ratio = 1
@@ -50,6 +51,7 @@ class FastVModelMixin:
         # custom arguments
         num_image_tokens_per_image: Optional[int],
         image_token_indices_for_each_batch: Optional[torch.Tensor],
+        visual: Optional[list],
     ):
         """
         Contains the shared logic that was duplicated across FastVLlamaModel and FastVQwen2Model.
@@ -166,13 +168,13 @@ class FastVModelMixin:
 
                             # pick top ratio of global image tokens
                             top_attention_rank_index_global = (
-                                image_attention_score_global.topk(int(num_global_image_tokens * global_ratio)).indices
+                                image_attention_score_global.topk(round(num_global_image_tokens * global_ratio)).indices
                                 + image_start_index
                             )
 
                             # pick top ratio of local image tokens
                             top_attention_rank_index_local = (
-                                image_attention_score_local.topk(int(num_local_image_tokens * ratio_local)).indices
+                                image_attention_score_local.topk(round(num_local_image_tokens * ratio_local)).indices
                                 + image_start_index
                             )
 
@@ -182,13 +184,14 @@ class FastVModelMixin:
 
                         elif SAMPLING_MODE == 'Uniform':
                             # uniformly sample R(%) of tokens from global and from local
-                            step_size = int(1 / total_ratio)
-                            # keep_indices.append( torch.arange(global_start_index, global_end_index,  step_size, device=device ) ) # uniform sampling in global tokens
-                            # keep_indices.append( torch.arange(local_start_index, local_end_index, step_size , device=device)) # uniform sampling in local tokens
-                            keep_indices.append( torch.arange(global_start_index, local_end_index,  step_size, device=device ) )
+                            if total_ratio != 0:
+                                step_size = round(1 / total_ratio)
+                                # keep_indices.append( torch.arange(global_start_index, global_end_index,  step_size, device=device ) ) # uniform sampling in global tokens
+                                # keep_indices.append( torch.arange(local_start_index, local_end_index, step_size , device=device)) # uniform sampling in local tokens
+                                keep_indices.append( torch.arange(global_start_index, local_end_index,  step_size, device=device ) )
                         elif SAMPLING_MODE == 'Random': # !!! this has not been adapted for video benchmarks yet
-                            n_global_tokens_to_keep = int(num_global_image_tokens * total_ratio)
-                            n_local_tokens_to_keep = int(num_local_image_tokens * total_ratio)
+                            n_global_tokens_to_keep = round(num_global_image_tokens * total_ratio)
+                            n_local_tokens_to_keep = round(num_local_image_tokens * total_ratio)
                             global_indx = torch.randperm( num_global_image_tokens )[: n_global_tokens_to_keep]
                             local_indx = torch.randperm(num_local_image_tokens)[: n_local_tokens_to_keep]
                             keep_indices.append( torch.arange(global_start_index, global_end_index,  device=device )[global_indx] )
@@ -199,11 +202,14 @@ class FastVModelMixin:
                         elif SAMPLING_MODE == 'FastV':
                             # compute mean attention
                             image_attention_score = self.last_attention.mean(dim=1)[0][-1][
-                                image_start_index : image_start_index + num_image_tokens_per_image # for video,  num_image_tokens_per_image is the total number of visual tokens for all frames
-                            ]
+                                image_start_index : image_start_index + num_image_tokens_per_image # for single mode, for  video,  num_image_tokens_per_image is the total number of visual tokens for all frames
+                            ] # in case of video,  multiple mode, num_image_tokens_per_img is 197 (number of tokens per frame)
+
+
+
                             # pick top ratio of them
                             top_attention_rank_index = (
-                                image_attention_score.topk(int(num_image_tokens_per_image * total_ratio)).indices
+                                image_attention_score.topk(round(num_image_tokens_per_image * total_ratio)).indices
                                 + image_start_index
                             )
                             keep_indices.append(top_attention_rank_index)
@@ -276,7 +282,7 @@ class FastVModelMixin:
                     )
 
                 elif SAMPLING_MODE == 'FastV' and decoder_layer.self_attn.layer_idx == K - 1 :
-                    # calculate the attention weights for next layer
+                    # calculate the attention weights for next layer,  stride1 729 tokens per frame leads to out of memory
                     temp_layer_outputs = decoder_layer(
                         hidden_states,
                         attention_mask=attention_mask,
@@ -285,7 +291,33 @@ class FastVModelMixin:
                         output_attentions=True,   #  output attention set to True
                         use_cache=use_cache,
                     )
-                    self.last_attention = temp_layer_outputs[1] #  (1, 28, 5389, 5389)
+                    self.last_attention = temp_layer_outputs[1] #  (1, 28, 5389, 5389)   28 heads
+                    # Begin Wei code
+                    if False:
+                        image_start_index = image_token_indices_for_each_batch[0][1:-1][0]
+                        global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(
+                            num_image_tokens_per_image, num_global_image_tokens, image_start_index)
+                        global_pos_str = f'global{global_start_index}to{global_end_index}'
+                        local_pos_str = f'local{local_start_index}to{local_end_index}'
+                        save_dir = f'/system/user/publicwork/lin/FastV_results/attention_scores/layer{decoder_layer.self_attn.layer_idx}_coco2017_cap_val'
+                        #  self.last_attention.mean(dim=1)[0][-1]  #  (1, 5389, 5389)
+                        #  self.last_attention[0, :, -1, :]  # (28, 5389)
+                        # save attention scores into save_dir
+                        os.makedirs(save_dir, exist_ok=True)
+                        # save attention scores
+                        vid_name = visual[0][0].split('/')[-1].split('.')[0] if visual[0][0] is not None else 'None'
+                        sample_id = visual[0][1]
+                        # torch.save(self.last_attention.mean(dim=1)[0][-1], os.path.join(save_dir, f"{vid_name}.pt"))
+                        # save it to numpy .npy file
+                        seq_len= self.last_attention.shape[2]
+                        seq_len2= self.last_attention.shape[3]
+                        # self.last_attention[0, :, -1, :].cpu().numpy().tofile(os.path.join(save_dir, f"sample{sample_id}_{vid_name}_seq{seq_len}_{seq_len2}.npy"))
+                        filepath = os.path.join(save_dir, f"sample{sample_id}_{vid_name}_seq{seq_len}_{seq_len2}_{global_pos_str}_{local_pos_str}.npy")
+                        # save to numpy file
+                        np.save(filepath, self.last_attention[0, :, -1, :].detach().cpu().numpy())
+                        print(f"Att seqlen {seq_len} saved to {filepath}")
+                    # End Wei code
+
                     layer_outputs = temp_layer_outputs
                 else:
                     if CALCULATE_ATTENTION_AVERAGES and decoder_layer.self_attn.layer_idx > 0 :
@@ -491,6 +523,7 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
         cache_position: Optional[torch.LongTensor] = None,
         num_image_tokens_per_image: Optional[int] = None,
         image_token_indices_for_each_batch: Optional[torch.Tensor] = None,
+        visual = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         # Here you only call the shared logic, specifying K=3, ratio=0.5
@@ -507,6 +540,7 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
             cache_position=cache_position,
             num_image_tokens_per_image=num_image_tokens_per_image,
             image_token_indices_for_each_batch=image_token_indices_for_each_batch,
+            visual = visual,
         )
 
 

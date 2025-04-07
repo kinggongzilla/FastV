@@ -168,6 +168,15 @@ class LlavaMetaForCausalLM(ABC):
     def get_vision_tower(self):
         return self.get_model().get_vision_tower()
 
+    # Begin Wei Code
+    def get_1dPool(self, image_feature, stride=2, pool_mode = "average"):
+        height = width = self.get_vision_tower().num_patches_per_side
+        num_patches, num_tokens, num_dim = image_feature.shape
+        image_feature = nn.functional.interpolate(image_feature, [math.ceil(height / stride), math.ceil(width /stride)], mode="bilinear")[0]
+        return image_feature
+
+    # End Wei Code
+
     def get_2dPool(self, image_feature, stride=2):
         height = width = self.get_vision_tower().num_patches_per_side
         num_frames, num_tokens, num_dim = image_feature.shape
@@ -180,7 +189,7 @@ class LlavaMetaForCausalLM(ABC):
             image_feature = nn.functional.max_pool2d(image_feature, stride)
         elif self.config.mm_spatial_pool_mode == "bilinear":
             height, width = image_feature.shape[2:]
-            scaled_shape = [math.ceil(height / stride), math.ceil(width / stride)]
+            scaled_shape = [math.ceil(height / stride), math.ceil(width / stride)] # stride is 2,  27x27 -> 14x14
             image_feature = nn.functional.interpolate(image_feature, size=scaled_shape, mode='bilinear')
 
         else:
@@ -280,13 +289,13 @@ class LlavaMetaForCausalLM(ABC):
             encoded_image_features = self.encode_images(concat_images)
             # image_features,all_faster_video_features = self.encode_multimodals(concat_images, video_idx_in_batch, split_sizes)
 
-            # This is a list, each element is [num_images, patch * patch, dim]
+            # This is a list, each element is [num_patch, patch * patch, dim]
             encoded_image_features = torch.split(encoded_image_features, split_sizes)
             image_features = []
             for idx, image_feat in enumerate(encoded_image_features):
                 # len(encoded_image_features) > len(video_idx_in_batch) is for case where one image placeholder is passed for each frame
                 if idx in video_idx_in_batch or (len(encoded_image_features) > len(video_idx_in_batch) and len(video_idx_in_batch) != 0 ):
-                    image_features.append(self.get_2dPool(image_feat))
+                    image_features.append(self.get_2dPool(image_feat, stride=2))  # when stride is 2,  27x27 (729) -> 14x14 (144)
                 else:
                     image_features.append(image_feat)
             # image_features = self.encode_multimodals(concat_images, video_idx_in_batch, split_sizes)
@@ -340,7 +349,7 @@ class LlavaMetaForCausalLM(ABC):
                                 image_feature = torch.cat((
                                     image_feature,
                                     self.model.image_newline[None].to(image_feature.device)
-                                ), dim=0)
+                                ), dim=0)  #  for single mode, 32x196+1=6273;  for multiple mode,  32x (196 + newline token = 197) = 6304
                             new_image_features.append(image_feature)
                         elif mm_newline_position == "no_token":
                             new_image_features.append(image_feature.flatten(0, 1))
@@ -348,8 +357,8 @@ class LlavaMetaForCausalLM(ABC):
                             raise ValueError(f"Unexpected mm_newline_position: {mm_newline_position}")
                     elif image_feature.shape[0] > 1:  # multi patches and multi images operations
                         # rank0_print("Single-images")
-                        base_image_feature = image_feature[0]
-                        image_feature = image_feature[1:]
+                        base_image_feature = image_feature[0] # global patch
+                        image_feature = image_feature[1:]  # local patches
                         height = width = self.get_vision_tower().num_patches_per_side
                         assert height * width == base_image_feature.shape[0]
 
@@ -381,7 +390,7 @@ class LlavaMetaForCausalLM(ABC):
                             unit = image_feature.shape[2]
                             image_feature = image_feature.permute(4, 0, 2, 1, 3).contiguous()
                             image_feature = image_feature.flatten(1, 2).flatten(2, 3)
-                            image_feature = unpad_image(image_feature, image_sizes[image_idx])
+                            image_feature = unpad_image(image_feature, image_sizes[image_idx]) # undo the padding
                             c, h, w = image_feature.shape
                             times = math.sqrt(h * w / (max_num_patches * unit**2))
                             if times > 1.1:
@@ -464,7 +473,7 @@ class LlavaMetaForCausalLM(ABC):
             image_token_indices = [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
 
             # Begin David Code
-            image_token_indices_for_each_batch.append(image_token_indices)
+            # image_token_indices_for_each_batch.append(image_token_indices)
             # End David Code
             cur_input_ids_noim = []
             cur_labels = labels[batch_idx]
@@ -477,24 +486,42 @@ class LlavaMetaForCausalLM(ABC):
             cur_input_embeds_no_im = torch.split(cur_input_embeds, split_sizes, dim=0)
             cur_new_input_embeds = []
             cur_new_labels = []
-
+            # Begin Wei code
+            indx_accumulator = 0
+            list_start_img_token_position_for_each_batch = []
+            # End Wei code
             for i in range(num_images + 1):
                 cur_new_input_embeds.append(cur_input_embeds_no_im[i])
                 cur_new_labels.append(cur_labels_noim[i])
+                # Begin Wei code
+                indx_accumulator += cur_input_embeds_no_im[i].shape[0]
+                # End Wei code
                 if i < num_images:
+
                     try:
                         cur_image_features = image_features[cur_image_idx]
                     except IndexError:
                         cur_image_features = image_features[cur_image_idx - 1]
                     cur_image_idx += 1
+                    # Begin Wei code
+                    list_start_img_token_position_for_each_batch.append(indx_accumulator)
+                    # End Wei code
                     cur_new_input_embeds.append(cur_image_features)
                     cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
+                    # Begin Wei code
+                    indx_accumulator += cur_image_features.shape[0]
+                    # End Wei code
+
 
             cur_new_input_embeds = [x.to(self.device) for x in cur_new_input_embeds]
 
             # import pdb; pdb.set_trace()
             cur_new_input_embeds = torch.cat(cur_new_input_embeds)
             cur_new_labels = torch.cat(cur_new_labels)
+
+            # Begin Wei code
+            image_token_indices_for_each_batch.append( [-1] +  list_start_img_token_position_for_each_batch +  [cur_new_input_embeds.shape[0],]  )
+            # End Wei code
 
             new_input_embeds.append(cur_new_input_embeds)
             new_labels.append(cur_new_labels)

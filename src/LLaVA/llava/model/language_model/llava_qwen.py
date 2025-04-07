@@ -77,8 +77,9 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
         return_dict: Optional[bool] = None,
         modalities: Optional[List[str]] = ["image"],
         dpo_forward: Optional[bool] = False,
-        num_image_tokens_per_image=None, 
+        num_image_tokens_per_image=None,
         image_token_indices_for_each_batch=None,
+        visual=None,
         cache_position=None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
@@ -119,7 +120,11 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
                 # Begin custom David code
                 num_image_tokens_per_image=num_image_tokens_per_image,
                 image_token_indices_for_each_batch=image_token_indices_for_each_batch,
+                visual = visual
                 # End custom David code
+                # Begin Wei code
+
+                # End Wei code
             )
 
     @torch.no_grad()

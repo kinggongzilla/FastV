@@ -1297,6 +1297,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
         num_image_tokens_per_image=None,
         image_token_indices=None,
         image_token_indices_for_each_batch=None,
+            visual = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -1343,6 +1344,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
             return_dict=return_dict,
             num_image_tokens_per_image=num_image_tokens_per_image,
             image_token_indices_for_each_batch=image_token_indices_for_each_batch,
+            visual = visual
         )
 
         hidden_states = outputs[0]
