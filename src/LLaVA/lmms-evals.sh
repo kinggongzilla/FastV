@@ -6,13 +6,13 @@
 KVCACHE_FILE="./llava/model/language_model/fastv_kvcache.py"
 
 # Model Name
-MODEL_NAME="llava-onevision-qwen2-7b-ov"
-MODEL_PATH="/system/user/publicdata/llm/Llava_weights/llava-onevision-qwen2-7b-ov"
-OUTPUT_MAIN_DIR="/system/user/publicwork/lin/FastV_results"
+MODEL_NAME="llava-onevision-qwen2-0.5b-ov"
+MODEL_PATH="../../../$MODEL_NAME/"
+OUTPUT_MAIN_DIR="logs"
 DATASET="ok_vqa"
-SAMPLING_MODE="FastV"
+SAMPLING_MODE="Random"
 NUM_PROCESSES=4
-gpu_id=3
+gpu_id=0
 # If RANK is undefined
 if [ -z "$RANK" ]; then
   # Set RANK to 0
@@ -34,18 +34,18 @@ RUN_CMD_BASE="CUDA_VISIBLE_DEVICES=$gpu_id python3 -m accelerate.commands.launch
 
 # List of (K, total_ratio, global_ratio) pairs you want to test
 declare -a pairs=(
-##  "1 0.9 0.9"
-##  "1 0.75 0.75"
+#  "1 0.9 0.9"
+#  "1 0.75 0.75"
 #  "1 0.5 0.5"
 #  "1 0.25 0.25"
 #  "1 0.1 0.1"
 #  "2 0.9 0.9"
 #  "2 0.75 0.75"
   "2 0.5 0.5"
-  "2 0.25 0.25"
-  "2 0.1 0.1"
-##  "3 0.9 0.9"
-##  "3 0.75 0.75"
+  # "2 0.25 0.25"
+  # "2 0.1 0.1"
+#  "3 0.9 0.9"
+#  "3 0.75 0.75"
 #  "3 0.5 0.5"
 #  "3 0.25 0.25"
 #  "3 0.1 0.1"
@@ -79,7 +79,7 @@ for pair in "${pairs[@]}"; do
   # We replace the dot (.) with underscore (_) for ratio
   TOTAL_RVAL_UNDERSCORE="${TOTAL_RVAL//./_}"
   GLOBAL_RVAL_UNDERSCORE="${GLOBAL_RVAL//./_}"
-  LOG_SUFFIX="k${KVAL}_tr${TOTAL_RVAL_UNDERSCORE}_gr${GLOBAL_RVAL_UNDERSCORE}_${MODEL_NAME}"
+  LOG_SUFFIX="k${KVAL}_tr${TOTAL_RVAL_UNDERSCORE}_gr${GLOBAL_RVAL_UNDERSCORE}_${MODEL_NAME}_${SAMPLING_MODE}"
   OUTPUT_PATH="${OUTPUT_MAIN_DIR}/${LOG_SUFFIX}"
 
   # Execute the command
