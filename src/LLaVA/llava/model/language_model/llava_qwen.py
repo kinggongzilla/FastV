@@ -79,7 +79,7 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
         dpo_forward: Optional[bool] = False,
         num_image_tokens_per_image=None,
         image_token_indices_for_each_batch=None,
-        visual=None,
+        my_sampling_params=None,
         cache_position=None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
@@ -120,10 +120,10 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
                 # Begin custom David code
                 num_image_tokens_per_image=num_image_tokens_per_image,
                 image_token_indices_for_each_batch=image_token_indices_for_each_batch,
-                visual = visual
+
                 # End custom David code
                 # Begin Wei code
-
+                my_sampling_params=my_sampling_params
                 # End Wei code
             )
 

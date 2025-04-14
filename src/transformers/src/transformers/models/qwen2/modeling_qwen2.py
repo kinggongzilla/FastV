@@ -670,6 +670,7 @@ class Qwen2SdpaAttention(Qwen2Attention):
         past_key_value: Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
+        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
@@ -688,27 +689,93 @@ class Qwen2SdpaAttention(Qwen2Attention):
 
         bsz, q_len, _ = hidden_states.size()
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        query_states = self.q_proj(hidden_states) # (1, 1, 3584)
+        key_states = self.k_proj(hidden_states)  # (1, 1, 512)
+        value_states = self.v_proj(hidden_states) # (1, 1, 512)
 
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)  # (1, 28, seq_len, 128)
+        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)  # (1, 4, seq_len, 128)
+        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)  # (1, 4, seq_len, 128)
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
-        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)  # the length of the previous KV cache + the current sequence length
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len) # (seq_len, 128), (seq_len, 128)
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
+        ################################## Wei To remove ##############################
+        if False:
+            if "keep_ratio" in kwargs:
+                # calculate the norm if it is not in the past_key_value (which is DynamicCache)
+                if not hasattr(past_key_value, 'key_norm'):
+                    past_key_value.key_norm = [None] * len(past_key_value.key_cache)
+                if past_key_value.key_norm[self.layer_idx] is None:
+                    # calculate the norm of the past key states
+                    past_key_states = past_key_value.key_cache[self.layer_idx] # (1, 4, 7402, 128)
+                    key_norms = torch.norm(past_key_states, p=2, dim=-1).mean(dim=1)  # (1, 4, 7402) -> (1, 7402)
+                    past_key_value.key_norm[self.layer_idx] = key_norms
+
+                # concatenate the new key norm with the past key norm
+                new_key_norms = torch.cat([past_key_value.key_norm[self.layer_idx], key_states.norm(p=2, dim=-1).mean(dim=1)], dim=-1)
+                past_key_value.key_norm[self.layer_idx] = new_key_norms
+        ################################## Wei To remove ##############################
 
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            # concatenate the new key and value states with the past key and value states  key_states (1, 4, 1, 128) -> (1, 4, 7403, 128), value_states (1, 4, 1, 128) -> (1, 4, 7403, 128)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+
+        ######################## Wei KV filtering logic ##################################
+        if "keep_ratio" in kwargs:
+
+            keep_ratio = kwargs["keep_ratio"]
+            image_start_indices = kwargs["image_start_indices"]
+            num_image_tokens_per_image = kwargs["num_image_tokens_per_image"]
+            tokens_to_keep = round(num_image_tokens_per_image * keep_ratio)
+            keep_indices = []
+            if False:
+                # The image keys remain the same for all the generation step,  at each step a new key of the response token is added.   so sorting the image key will just lead to same order for each generation step.
+                assert key_states.shape[-2] == past_key_value.key_norm[self.layer_idx].shape[-1]
+                key_norms = past_key_value.key_norm[self.layer_idx][0] # (1, 7403)
+
+                for image_start_indice in image_start_indices:
+
+                    # Get the key norms for the image tokens
+                    image_key_norms = key_norms[image_start_indice:image_start_indice + num_image_tokens_per_image]
+                    # Extract the top-k tokens with the lowest norms
+                    topk_indices = torch.topk(image_key_norms , tokens_to_keep, largest=False).indices
+
+                    topk_indices = topk_indices + image_start_indice
+                    keep_indices.append(topk_indices)
+            if not hasattr(past_key_value, 'scale'):
+                past_key_value.scale = query_states.shape[-1] ** 0.5
+            scale = past_key_value.scale
+            for image_start_indice in image_start_indices:
+                image_key_states = key_states[:, :, image_start_indice:image_start_indice + num_image_tokens_per_image, :] # (1, 4, num_image_tokens_per_image, 128)
+                # standard scaled dot-product attention
+                attebtion_weights = torch.einsum("bhqd,bhkd->bhqk", query_states, image_key_states) / scale # (1, 28, 1, 128) * (1, 28, num_image_tokens_per_image, 128) -> (1, 28, 1, num_image_tokens_per_image)
+                attention_weights = nn.functional.softmax(attebtion_weights, dim=-1) # (1, 28, 1, num_image_tokens_per_image)
+                # get the top-k tokens with the highest attention weights
+                token_scores = attention_weights.mean(dim=1).squeeze(1).squeeze(0)
+                topk_indices = torch.topk(token_scores, tokens_to_keep, largest=True).indices
+                topk_indices = topk_indices + image_start_indice
+                keep_indices.append(topk_indices)
+
+            keep_indices.append(torch.arange(0, image_start_indices[0], device=key_states.device))
+            keep_indices.append(torch.arange(image_start_indices[-1] + num_image_tokens_per_image, key_states.shape[-2], device=key_states.device))
+            keep_indices = torch.cat(keep_indices).sort().values
+            # filter the key and value states
+            key_states = key_states.index_select(2, keep_indices) # (1, 4, 7403, 128) -> (1, 4, 3718, 128)
+            value_states = value_states.index_select(2, keep_indices) # (1, 4, 7403, 128) -> (1, 4, 3718, 128)
+
+        ######################## Wei KV filtering logic ##################################
+
+
 
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
@@ -724,14 +791,14 @@ class Qwen2SdpaAttention(Qwen2Attention):
             value_states = value_states.contiguous()
 
         attn_output = torch.nn.functional.scaled_dot_product_attention(
-            query_states,
-            key_states,
-            value_states,
+            query_states,  # (1, 28, 1, 128)
+            key_states, # (1, 28, 7403, 128)
+            value_states, # (1, 28, 7403, 128)
             attn_mask=attention_mask,
             dropout_p=self.attention_dropout if self.training else 0.0,
             # The q_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case q_len == 1.
             is_causal=self.is_causal and attention_mask is None and q_len > 1,
-        )
+        )  #  (1, 28, seq_len, 128)   or   (1, 28, 1, 128)
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(bsz, q_len, self.hidden_size)
@@ -798,15 +865,28 @@ class Qwen2DecoderLayer(nn.Module):
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            output_attentions=output_attentions,
-            use_cache=use_cache,
-        )
-        hidden_states = residual + hidden_states
+        if isinstance(self.self_attn, Qwen2SdpaAttention) and 'keep_ratio' in kwargs:
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                keep_ratio=kwargs['keep_ratio'],
+                image_start_indices=kwargs.get('image_start_indices', None),
+                num_image_tokens_per_image=kwargs.get('num_image_tokens_per_image', None),
+            )
+        else:
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+            )    #   here  returned hidden states is the attended outputs at this layer,   present_key_value is the accumulated key and value states
+        hidden_states = residual + hidden_states  #  residual block
 
         # Fully Connected
         residual = hidden_states
@@ -1297,7 +1377,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
         num_image_tokens_per_image=None,
         image_token_indices=None,
         image_token_indices_for_each_batch=None,
-            visual = None,
+            my_sampling_params = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -1344,7 +1424,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
             return_dict=return_dict,
             num_image_tokens_per_image=num_image_tokens_per_image,
             image_token_indices_for_each_batch=image_token_indices_for_each_batch,
-            visual = visual
+            my_sampling_params = my_sampling_params
         )
 
         hidden_states = outputs[0]

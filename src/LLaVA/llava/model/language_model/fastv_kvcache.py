@@ -15,26 +15,44 @@ import json
 CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
-DYNAMIC_PRUNING = True
+DYNAMIC_PRUNING = False
 
 
 
-SAMPLING_MODE = "Random"
+# SAMPLING_MODE = "HiddenStatesNormL1"
+# SAMPLING_MODE = "Uniform"
 
 
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
 
 
-K = 0
-total_ratio = 0
-global_ratio = 0
+# K = 100
+# total_ratio = 1
+
+global_ratio = 1
 min_keep_ratio = 0.0
+
+# r1= 0.5
+# r2= 0.3
+# r3= 0
+#
+# k1= 5
+# k2= 15
+# k3= 20
+
+r1 = 0.5
+r2 = 0.3
+r3 = 0
+
+k1 = 5
+k2 = 15
+k3 = 20
 
 
 # Only used for dynamic pruning with keep_r_at_k function
-r_list = [0.5, 0.3, 0]  # Keep ratios
-k_list = [5, 15, 20]      # Layer indices where these apply. ATTENTION. These are *added* the the K value defined above
+r_list = [r1, r2, r3]  # Keep ratios
+k_list = [k1, k2, k3]      # Layer indices where these apply. ATTENTION. These are *added* the the K value defined above
 
 num_global_image_tokens_llava_ov = 729 # i think this is only the case for images, videos get 2dPooled --> less tokens
 avg_attentions = {}
@@ -93,12 +111,16 @@ class FastVModelMixin:
         # custom arguments
         num_image_tokens_per_image: Optional[int],
         image_token_indices_for_each_batch: Optional[torch.Tensor],
-        visual: Optional[list],
+        my_sampling_params: Optional[dict]
     ):
         """
         Contains the shared logic that was duplicated across FastVLlamaModel and FastVQwen2Model.
         Simply parameterize the small differences like K and ratio.
         """
+        # Wei code
+        SAMPLING_MODE = my_sampling_params['sampling_mode']
+        K = my_sampling_params['sampling_start_layer']
+        total_ratio = my_sampling_params['keep_ratio']
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -182,16 +204,11 @@ class FastVModelMixin:
                     use_cache,
                 )
             else:
-                # !!!!!!!!!1 image pruning logic !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                if (
-                    seq_length > 1
-                    and image_token_indices_for_each_batch is not None
-                ) and (
-                    decoder_layer.self_attn.layer_idx == K
-                    or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
-                ):
+                # !!!!!!!!!! image pruning logic !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                if ( seq_length > 1 and image_token_indices_for_each_batch is not None ) and ( decoder_layer.self_attn.layer_idx == K  or (DYNAMIC_PRUNING and decoder_layer.self_attn.layer_idx >= K)
+                ) and SAMPLING_MODE not in ['TokenWiseKVCompress']:
                     if DYNAMIC_PRUNING:
-                        global total_ratio
+                        # global total_ratio
                         keep_ratios = self._calc_individual_keep_ratios(prune_ratio_func, len(self.layers), K=K, min_keep_ratio=min_keep_ratio)
                         total_ratio = keep_ratios[decoder_layer.self_attn.layer_idx]
                     device = hidden_states.device
@@ -202,7 +219,7 @@ class FastVModelMixin:
                     keep_indices = []
                     for image_start_index in image_start_indices:
                         # attention! num_global_image_tokens becomes less than num_global_image_tokens_llava_ov for very strong pruning!
-                        num_global_image_tokens, global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_before_pruning, num_global_image_tokens_llava_ov, image_start_index)
+                        num_global_image_tokens, global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_before_pruning, num_global_image_tokens_llava_ov, image_start_index, total_ratio)
 
                         if SAMPLING_MODE == 'FastV' and USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL and ratio_local < 1:
                             # compute mean attention of global image tokens
@@ -349,7 +366,8 @@ class FastVModelMixin:
                         use_cache=use_cache,
                     )
 
-                elif SAMPLING_MODE == 'FastV' and decoder_layer.self_attn.layer_idx == K - 1 and seq_length > 1: #  in this caes, the attention will be computed only when predicting the first output token
+                elif SAMPLING_MODE == 'FastV' and decoder_layer.self_attn.layer_idx == K - 1 and seq_length > 1:
+                    #  in this caes, the attention will be computed only when predicting the first output token
                     # calculate the attention weights for next layer, stride1 729 tokens per frame leads to out of memory
                     temp_layer_outputs = decoder_layer(
                         hidden_states,
@@ -373,6 +391,7 @@ class FastVModelMixin:
                         # save attention scores into save_dir
                         os.makedirs(save_dir, exist_ok=True)
                         # save attention scores
+                        visual = my_sampling_params['visual']
                         vid_name = visual[0][0].split('/')[-1].split('.')[0] if visual[0][0] is not None else 'None'
                         sample_id = visual[0][1]
                         # torch.save(self.last_attention.mean(dim=1)[0][-1], os.path.join(save_dir, f"{vid_name}.pt"))
@@ -446,15 +465,35 @@ class FastVModelMixin:
                         position_ids[0][0] = past_key_values.get_usable_length(hidden_states.shape[-2], decoder_layer.self_attn.layer_idx)
                         # attention_mask = attention_mask[:, :, :position_ids.item() + 1, :position_ids.item() + 1]
 
-                    # normal
-                    layer_outputs = decoder_layer(
-                        hidden_states,
-                        attention_mask=attention_mask,
-                        position_ids=position_ids,
-                        past_key_value=past_key_values,
-                        output_attentions=output_attentions,  # output_attention set to False
-                        use_cache=use_cache,
-                    )
+
+
+                    if SAMPLING_MODE == 'TokenWiseKVCompress' and  seq_length == 1 and decoder_layer.self_attn.layer_idx >= K:
+                        image_start_indices = image_token_indices_for_each_batch[0][1:-1]  # batch size is 1 by default
+                        # KV compression starting from the second response token (seq_length == 1)
+                        # KV compression is applied from the K-th layer onwards
+                        # the indices are chosen based on the finding that low L2 norm of key leads to high attention
+                        layer_outputs = decoder_layer(
+                            hidden_states,
+                            attention_mask=attention_mask,
+                            position_ids=position_ids,
+                            past_key_value=past_key_values,
+                            output_attentions=output_attentions,  # output_attention set to False
+                            use_cache=use_cache,
+                            keep_ratio = total_ratio,
+                            image_start_indices=image_start_indices,
+                            num_image_tokens_per_image=num_image_tokens_before_pruning,
+                        )
+
+                    ################ Normal forward pass ##############
+                    else:
+                        layer_outputs = decoder_layer(
+                            hidden_states,
+                            attention_mask=attention_mask,
+                            position_ids=position_ids,
+                            past_key_value=past_key_values,
+                            output_attentions=output_attentions,  # output_attention set to False
+                            use_cache=use_cache,
+                        )
 
             hidden_states = layer_outputs[0] # (bz, seq_len, feat_dim)  1, 5389, 3584
 
@@ -464,7 +503,7 @@ class FastVModelMixin:
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
-
+        # end of for loop for all layers
         hidden_states = self.norm(hidden_states)
 
         # add final hidden states
@@ -475,7 +514,7 @@ class FastVModelMixin:
         if use_cache:
             next_cache = (
                 next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
-            )
+            )   #   pass all the key value cache states to the next layer
 
         # return either tuple or dataclass
         if not return_dict:
@@ -483,7 +522,7 @@ class FastVModelMixin:
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=next_cache,
+            past_key_values=next_cache,  #   pass all the key value cache states to the next layer
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
@@ -513,6 +552,7 @@ class FastVModelMixin:
         num_image_tokens_before_pruning,
         num_global_image_tokens,
         image_start_index,
+        total_ratio,
     ):
         if num_image_tokens_before_pruning < num_global_image_tokens:
             num_global_image_tokens = num_image_tokens_before_pruning
@@ -620,7 +660,7 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
         cache_position: Optional[torch.LongTensor] = None,
         num_image_tokens_per_image: Optional[int] = None,
         image_token_indices_for_each_batch: Optional[torch.Tensor] = None,
-        visual = None,
+        my_sampling_params = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         # Here you only call the shared logic, specifying K=3, ratio=0.5
@@ -637,7 +677,7 @@ class FastVQwen2Model(Qwen2Model, FastVModelMixin):
             cache_position=cache_position,
             num_image_tokens_per_image=num_image_tokens_per_image,
             image_token_indices_for_each_batch=image_token_indices_for_each_batch,
-            visual = visual,
+            my_sampling_params = my_sampling_params,
         )
 
 
