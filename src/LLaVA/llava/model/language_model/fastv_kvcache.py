@@ -16,30 +16,16 @@ CALCULATE_NUM_KEPT_TOKENS = False
 CALCULATE_ATTENTION_AVERAGES = False #this significantly slows down speed; hence only set True when necessary
 USE_SEPARATE_R_FOR_GLOBAL_AND_LOCAL = False
 DYNAMIC_PRUNING = False
-
+STEPSIZE_KV_COMPRESSION = 2 # this is used as layer_idy mod STEPSIZE_KV_COMPRESSION == 0 to apply kv compression every nth layer starting from K
 
 
 # SAMPLING_MODE = "HiddenStatesNormL1"
 # SAMPLING_MODE = "Uniform"
 
-
 LOGS_DIR="/home/david/JKU/master/thesis/FastV/src/LLaVA/logs"
 
-
-
-# K = 100
-# total_ratio = 1
-
-global_ratio = 1
+global_ratio = 0.5
 min_keep_ratio = 0.0
-
-# r1= 0.5
-# r2= 0.3
-# r3= 0
-#
-# k1= 5
-# k2= 15
-# k3= 20
 
 r1 = 0.5
 r2 = 0.3
@@ -48,7 +34,6 @@ r3 = 0
 k1 = 5
 k2 = 15
 k3 = 20
-
 
 # Only used for dynamic pruning with keep_r_at_k function
 r_list = [r1, r2, r3]  # Keep ratios
@@ -467,7 +452,7 @@ class FastVModelMixin:
 
 
 
-                    if SAMPLING_MODE == 'TokenWiseKVCompress' and  seq_length == 1 and decoder_layer.self_attn.layer_idx >= K:
+                    if SAMPLING_MODE == 'TokenWiseKVCompress' and  seq_length == 1 and (decoder_layer.self_attn.layer_idx - K) >= 0 and (decoder_layer.self_attn.layer_idx - K) % STEPSIZE_KV_COMPRESSION == 0:
                         image_start_indices = image_token_indices_for_each_batch[0][1:-1]  # batch size is 1 by default
                         # KV compression starting from the second response token (seq_length == 1)
                         # KV compression is applied from the K-th layer onwards
