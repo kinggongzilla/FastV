@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --account=EUHPC_D18_005
-#SBATCH --nodes=1
+#SBATCH --nodes=4
 #SBATCH --gres=gpu:4
 #SBATCH --tasks-per-node=1
 #SBATCH --cpus-per-task=32
@@ -26,6 +26,9 @@ source /leonardo/home/userexternal/dhauser0/miniconda3/etc/profile.d/conda.sh
 # Activate conda environment
 conda activate base
 
+# Download required NLTK data (for ifeval benchmark)
+python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab')"
+
 # Install accelerate (if not already installed)
 pip show accelerate || pip install accelerate
 
@@ -44,4 +47,4 @@ export HF_DATASETS_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Run the script
-/leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA/lmms-evals.sh
+/leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA/lmms-evals_TokenWiseKVCompress_textcaps.sh
