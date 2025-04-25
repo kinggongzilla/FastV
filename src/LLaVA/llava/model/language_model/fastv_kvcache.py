@@ -199,7 +199,7 @@ class FastVModelMixin:
                     device = hidden_states.device
 
                     # Start indices, ignoring the first and last
-                    image_start_indices = image_token_indices_for_each_batch[0][1:-1]
+                    image_start_indices = image_token_indices_for_each_batch[0][1:-1] if len(image_token_indices_for_each_batch) > 0 else []
 
                     keep_indices = []
                     for image_start_index in image_start_indices:
@@ -405,7 +405,7 @@ class FastVModelMixin:
 
                         # Load existing avg_attentions from file
                         avg_attentions = self._load_json_file(f'{LOGS_DIR}/avg_attentions.json')
-                        image_start_indices = image_token_indices_for_each_batch[0][1:-1]
+                        image_start_indices = image_token_indices_for_each_batch[0][1:-1] if len(image_token_indices_for_each_batch) > 0 else []
                         for image_start_index in image_start_indices:
                             # attention! num_global_image_tokens becomes less than num_global_image_tokens_llava_ov for very strong pruning!
                             num_global_image_tokens, global_start_index, global_end_index, local_start_index, local_end_index, ratio_local, num_local_image_tokens = self._calculate_image_token_indices(num_image_tokens_before_pruning, num_global_image_tokens_llava_ov, image_start_index)
@@ -453,11 +453,14 @@ class FastVModelMixin:
 
 
                     if SAMPLING_MODE == 'TokenWiseKVCompress' and  seq_length == 1 and (decoder_layer.self_attn.layer_idx - K) >= 0 and (decoder_layer.self_attn.layer_idx - K) % STEPSIZE_KV_COMPRESSION == 0:
-                        if image_token_indices_for_each_batch is not None:
+                        if len(image_token_indices_for_each_batch) > 0:
                             image_start_indices = image_token_indices_for_each_batch[0][1:-1]  # batch size is 1 by default
+                        else:
+                            image_start_indices = []
                         # KV compression starting from the second response token (seq_length == 1)
                         # KV compression is applied from the K-th layer onwards
                         # the indices are chosen based on the finding that low L2 norm of key leads to high attention
+                        print(decoder_layer.self_attn.layer_idx)
                         layer_outputs = decoder_layer(
                             hidden_states,
                             attention_mask=attention_mask,

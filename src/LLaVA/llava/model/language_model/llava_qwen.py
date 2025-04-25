@@ -77,7 +77,7 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
         return_dict: Optional[bool] = None,
         modalities: Optional[List[str]] = ["image"],
         dpo_forward: Optional[bool] = False,
-        num_image_tokens_per_image=None,
+        num_image_tokens_per_image=0,
         image_token_indices_for_each_batch=None,
         my_sampling_params=None,
         cache_position=None,
@@ -141,8 +141,8 @@ class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
         if "inputs_embeds" in kwargs:
             raise NotImplementedError("`inputs_embeds` is not supported")
 
-        num_image_tokens_per_image = None
-        image_token_indices_for_each_batch = None
+        num_image_tokens_per_image = 0
+        image_token_indices_for_each_batch = []
         if images is not None:
             (inputs, position_ids, attention_mask, _, inputs_embeds, _, num_image_tokens_per_image, image_token_indices_for_each_batch) = self.prepare_inputs_labels_for_multimodal(inputs, position_ids, attention_mask, None, None, images, modalities, image_sizes=image_sizes)
         else:
