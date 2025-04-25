@@ -47,4 +47,4 @@ export HF_DATASETS_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Run the script
-/leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA/lmms-evals_TokenWiseKVCompress_textcaps.sh
+/leonardo_scratch/fast/EUHPC_D18_005/david/FastV/src/LLaVA/lmms-evals.sh

@@ -738,36 +738,14 @@ class Qwen2SdpaAttention(Qwen2Attention):
             num_image_tokens_per_image = kwargs["num_image_tokens_per_image"]
             tokens_to_keep = round(num_image_tokens_per_image * keep_ratio)
             keep_indices = []
-            if False:
-                # The image keys remain the same for all the generation step,  at each step a new key of the response token is added.   so sorting the image key will just lead to same order for each generation step.
-                assert key_states.shape[-2] == past_key_value.key_norm[self.layer_idx].shape[-1]
-                key_norms = past_key_value.key_norm[self.layer_idx][0] # (1, 7403)
 
-                for image_start_indice in image_start_indices:
-
-                    # Get the key norms for the image tokens
-                    image_key_norms = key_norms[image_start_indice:image_start_indice + num_image_tokens_per_image]
-                    # Extract the top-k tokens with the lowest norms
-                    topk_indices = torch.topk(image_key_norms , tokens_to_keep, largest=False).indices
-
-                    topk_indices = topk_indices + image_start_indice
-                    keep_indices.append(topk_indices)
             if not hasattr(past_key_value, 'scale'):
                 past_key_value.scale = query_states.shape[-1] ** 0.5
-            scale = past_key_value.scale
-            for image_start_indice in image_start_indices:
-                image_key_states = key_states[:, :, image_start_indice:image_start_indice + num_image_tokens_per_image, :] # (1, 4, num_image_tokens_per_image, 128)
-                # standard scaled dot-product attention
-                attebtion_weights = torch.einsum("bhqd,bhkd->bhqk", query_states, image_key_states) / scale # (1, 28, 1, 128) * (1, 28, num_image_tokens_per_image, 128) -> (1, 28, 1, num_image_tokens_per_image)
-                attention_weights = nn.functional.softmax(attebtion_weights, dim=-1) # (1, 28, 1, num_image_tokens_per_image)
-                # get the top-k tokens with the highest attention weights
-                token_scores = attention_weights.mean(dim=1).squeeze(1).squeeze(0)
-                topk_indices = torch.topk(token_scores, tokens_to_keep, largest=True).indices
-                topk_indices = topk_indices + image_start_indice
-                keep_indices.append(topk_indices)
-
-            keep_indices.append(torch.arange(0, image_start_indices[0], device=key_states.device))
-            keep_indices.append(torch.arange(image_start_indices[-1] + num_image_tokens_per_image, key_states.shape[-2], device=key_states.device))
+            attention_weights = torch.einsum("bhqd,bhkd->bhqk", query_states, key_states) # (1, 28, 1, 128) * (1, 28, num_image_tokens_per_image, 128) -> (1, 28, 1, num_image_tokens_per_image)
+            # get the top-k tokens with the highest attention weights
+            token_scores = attention_weights.mean(dim=1).squeeze(1).squeeze(0)
+            topk_indices = torch.topk(token_scores, tokens_to_keep, largest=True).indices
+            keep_indices.append(topk_indices)
             keep_indices = torch.cat(keep_indices).sort().values
             # filter the key and value states
             key_states = key_states.index_select(2, keep_indices) # (1, 4, 7403, 128) -> (1, 4, 3718, 128)
