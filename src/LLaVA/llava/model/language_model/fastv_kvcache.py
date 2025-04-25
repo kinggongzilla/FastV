@@ -460,7 +460,6 @@ class FastVModelMixin:
                         # KV compression starting from the second response token (seq_length == 1)
                         # KV compression is applied from the K-th layer onwards
                         # the indices are chosen based on the finding that low L2 norm of key leads to high attention
-                        print(decoder_layer.self_attn.layer_idx)
                         layer_outputs = decoder_layer(
                             hidden_states,
                             attention_mask=attention_mask,
