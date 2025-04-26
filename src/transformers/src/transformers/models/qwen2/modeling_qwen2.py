@@ -736,7 +736,7 @@ class Qwen2SdpaAttention(Qwen2Attention):
             keep_ratio = kwargs["keep_ratio"]
             image_start_indices = kwargs["image_start_indices"]
             num_image_tokens_per_image = kwargs["num_image_tokens_per_image"]
-            tokens_to_keep = round(num_image_tokens_per_image * keep_ratio)
+            tokens_to_keep = round(kv_seq_len * keep_ratio)
             keep_indices = []
 
             if not hasattr(past_key_value, 'scale'):
