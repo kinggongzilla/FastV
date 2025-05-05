@@ -103,11 +103,11 @@ class FastVModelMixin:
         Simply parameterize the small differences like K and ratio.
         """
         # Wei code
-        SAMPLING_MODE = my_sampling_params['sampling_mode']
-        K = my_sampling_params['sampling_start_layer']
-        total_ratio = my_sampling_params['keep_ratio']
+        SAMPLING_MODE = "TokenWiseKVCompress" #my_sampling_params['sampling_mode']
+        K = 5 #my_sampling_params['sampling_start_layer']
+        total_ratio = 0.1 #my_sampling_params['keep_ratio']
 
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = True # output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -508,9 +508,64 @@ class FastVModelMixin:
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
 
+        #save image attentions
+        # all_self_attns is tuple of length num_layers with each element of shape (1, 14, seq_length, num_total tokens)
+        image_start_index = image_token_indices_for_each_batch[0][1:-1][0]
+        image_global_end_index = image_start_index + 729
+        
+        print(decoder_layer.self_attn.layer_idx)
+        print(all_self_attns[0][0, :, -1, image_start_index:image_global_end_index].shape)
+
+        import matplotlib.pyplot as plt
+
+        # Assuming all_self_attns[0] and all_self_attns[1] are defined and have the required shape
+        # Extract the tensors
+        layer_0_att = all_self_attns[0][0, :, -1, image_start_index:image_global_end_index]
+        layer_1_att = all_self_attns[1][0, :, -1, image_start_index:image_global_end_index]
+        layer_2_att = all_self_attns[2][0, :, -1, image_start_index:image_global_end_index]
+        layer_24_att = all_self_attns[-1][0, :, -1, image_start_index:image_global_end_index]
+
+        # Reshape the tensors
+        reshaped_tensor_0 = layer_0_att.reshape(14, 27, 27)
+        reshaped_tensor_1 = layer_1_att.reshape(14, 27, 27)
+        reshaped_tensor_2 = layer_2_att.reshape(14, 27, 27)
+        reshaped_tensor_24 = layer_24_att.reshape(14, 27, 27)
+        # Scale the values to [0, 255]
+        def scale_tensor(tensor, lower_percentile=1, upper_percentile=99):
+            flat = tensor.flatten()
+            sorted_vals, _ = torch.sort(flat)
+            n = len(sorted_vals)
+
+            # Compute percentile values
+            lower_idx = int((lower_percentile / 100.0) * n)
+            upper_idx = int((upper_percentile / 100.0) * n) - 1
+
+            vmin = sorted_vals[lower_idx]
+            vmax = sorted_vals[upper_idx]
+
+            # Clip and scale
+            tensor_clipped = torch.clamp(tensor, min=vmin, max=vmax)
+            scaled = (tensor_clipped - vmin) / (vmax - vmin + 1e-5) * 255
+            return scaled.type(torch.uint8)
+
+        scaled_tensor_0 = scale_tensor(reshaped_tensor_0)
+        scaled_tensor_1 = scale_tensor(reshaped_tensor_1)
+        scaled_tensor_2 = scale_tensor(reshaped_tensor_2)
+        scaled_tensor_24 = scale_tensor(reshaped_tensor_24)
+
+        # Save the images
+        def save_images(tensor, prefix):
+            for i in range(tensor.shape[0]):
+                plt.imsave(f'{prefix}_head_{i}.png', tensor[i].cpu(), cmap='Spectral')
+
+        save_images(scaled_tensor_0, f'layer_0_token_{all_self_attns[0].shape[-1] - 761}')
+        save_images(scaled_tensor_1, f'layer_1_token_{all_self_attns[0].shape[-1] - 761}')
+        save_images(scaled_tensor_2, f'layer_2_token_{all_self_attns[0].shape[-1] - 761}')
+        save_images(scaled_tensor_24, f'layer_24_token_{all_self_attns[0].shape[-1] - 761}')
+
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            past_key_values=next_cache,  #   pass all the key value cache states to the next layer
+            past_key_values=next_cache,  # pass all the key value cache states to the next layer
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
