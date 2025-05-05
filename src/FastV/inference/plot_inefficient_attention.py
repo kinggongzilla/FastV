@@ -94,21 +94,21 @@ if __name__=="__main__":
         type=str,
         required=False,
         # default="../llama3-llava-next-8b",
-        default="../llava-onevision-qwen2-0.5b-ov",
+        default="/home/david/JKU/master/thesis/llava-onevision-qwen2-0.5b-ov",
         help='Path to the pretrained model'
     )
     parser.add_argument(
         '--image-path',
         type=str,
         required=False,
-        default="./src/LLaVA/images/llava_logo.png",
+        default="/home/david/JKU/master/thesis/FastV/src/FastV/inference/clevr_geometric_objects.png",
         help='Path to the image to be processed (default: "./src/LLaVA/images/llava_logo.png")'
     )
     parser.add_argument(
         '--prompt',
         type=str,
         required=False,
-        default="Describe the image in details.",
+        default="Describe which objects are in the image in one short sentence.",
         help='Prompt to describe the image (default: "Describe the image in details.")'
     )
     parser.add_argument(
@@ -118,6 +118,15 @@ if __name__=="__main__":
         default="./output_example",
         help='Path to save the output and attention maps (default: "./output_example")'
     )
+
+    parser.add_argument(
+        '--sampling_mode',
+        type=str,
+        required=False,
+        default="TokenWiseKVCompress",
+        help='The sampling mode which is used.'
+    )
+
     pargs = parser.parse_args()
 
     class InferenceArgs:
@@ -126,12 +135,12 @@ if __name__=="__main__":
         image_file = None
         device = "cuda"
         conv_mode = None
-        temperature = 0.2
+        temperature = 0.0
         max_new_tokens = 512
         load_8bit = False
         load_4bit = True if "llama" in model_path.lower() else False
         debug = False
-        image_aspect_ratio = 'anyres'
+        image_aspect_ratio = 'pad'
         image_grid_pinpoints = None
 
     args = InferenceArgs()
@@ -177,9 +186,9 @@ if __name__=="__main__":
             #the second dimension is the number of image parts
             #save each part as an image (total is 5)
             for i in range(image_tensor.shape[1]):
-                img = image_tensor[0][i].cpu().detach().numpy().transpose(1,2,0)
+                img = image_tensor[0][i].cpu().detach().numpy()
                 img = Image.fromarray((img * 255).astype('uint8'))
-                img.save("output_example/anyres_image_parts/image_part_"+str(i)+".png")
+                # img.save("/home/david/JKU/master/thesis/FastV/src/FastV/inference/output_attention_plot/image_part_"+str(i)+".png")
             conv = conv_templates[args.conv_mode].copy()
             conv.tokenizer = tokenizer
             if type(image_tensor) is list:
@@ -228,9 +237,11 @@ if __name__=="__main__":
                     )
             
 
-            output = tokenizer.decode(output_ids['sequences'][0, input_ids.shape[1]:],skip_spectial_tokens=True).strip().replace("</s>","")
+            output = tokenizer.decode(output_ids['sequences'][0],skip_spectial_tokens=True).strip().replace("</s>","")
             outputs.append(output)
             print(output)
+            output_tokens = tokenizer.tokenize(output)
+            print("Output tokens:", output_tokens)
 
             outputs_attention.append(output_ids['attentions'])
         
