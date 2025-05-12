@@ -44,6 +44,9 @@ from ...utils import (
     replace_return_docstrings,
 )
 from .configuration_qwen2 import Qwen2Config
+from .speedup.triton_kernels_kvcache_pruning import prune_tokens_triton
+from .speedup.triton_kernels_efficient_kvcache_pruning import prune_and_attend
+from .speedup.fast_token_pruning import prune_tokens_fast
 
 
 if is_flash_attn_2_available():
@@ -704,23 +707,6 @@ class Qwen2SdpaAttention(Qwen2Attention):
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        ################################## Wei To remove ##############################
-        if False:
-            if "keep_ratio" in kwargs:
-                # calculate the norm if it is not in the past_key_value (which is DynamicCache)
-                if not hasattr(past_key_value, 'key_norm'):
-                    past_key_value.key_norm = [None] * len(past_key_value.key_cache)
-                if past_key_value.key_norm[self.layer_idx] is None:
-                    # calculate the norm of the past key states
-                    past_key_states = past_key_value.key_cache[self.layer_idx] # (1, 4, 7402, 128)
-                    key_norms = torch.norm(past_key_states, p=2, dim=-1).mean(dim=1)  # (1, 4, 7402) -> (1, 7402)
-                    past_key_value.key_norm[self.layer_idx] = key_norms
-
-                # concatenate the new key norm with the past key norm
-                new_key_norms = torch.cat([past_key_value.key_norm[self.layer_idx], key_states.norm(p=2, dim=-1).mean(dim=1)], dim=-1)
-                past_key_value.key_norm[self.layer_idx] = new_key_norms
-        ################################## Wei To remove ##############################
-
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
@@ -729,76 +715,122 @@ class Qwen2SdpaAttention(Qwen2Attention):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
+        # --- setup pruning parameters if requested ---
+        keep_ratio = kwargs.get("keep_ratio", None)
+        pruning_method = kwargs.get("pruning_method", "prune_and_attend_triton") #unoptimized or fast_no_triton or triton_prune or prune_and_attend_triton
 
-        ######################## Wei KV filtering logic ##################################
-        if "keep_ratio" in kwargs:
-
-            keep_ratio = kwargs["keep_ratio"]
-            image_start_indices = kwargs["image_start_indices"]
+        if keep_ratio is not None:
+            # common setup
+            image_start_indices = torch.tensor(
+                kwargs["image_start_indices"], dtype=torch.long, device=query_states.device
+            )
             num_image_tokens_per_image = kwargs["num_image_tokens_per_image"]
-            tokens_to_keep = round(num_image_tokens_per_image * keep_ratio)
-            keep_indices = []
-            if False:
-                # The image keys remain the same for all the generation step,  at each step a new key of the response token is added.   so sorting the image key will just lead to same order for each generation step.
-                assert key_states.shape[-2] == past_key_value.key_norm[self.layer_idx].shape[-1]
-                key_norms = past_key_value.key_norm[self.layer_idx][0] # (1, 7403)
 
-                for image_start_indice in image_start_indices:
-
-                    # Get the key norms for the image tokens
-                    image_key_norms = key_norms[image_start_indice:image_start_indice + num_image_tokens_per_image]
-                    # Extract the top-k tokens with the lowest norms
-                    topk_indices = torch.topk(image_key_norms , tokens_to_keep, largest=False).indices
-
-                    topk_indices = topk_indices + image_start_indice
-                    keep_indices.append(topk_indices)
-            if not hasattr(past_key_value, 'scale'):
-                past_key_value.scale = query_states.shape[-1] ** 0.5
-            scale = past_key_value.scale
-            for image_start_indice in image_start_indices:
-                image_key_states = key_states[:, :, image_start_indice:image_start_indice + num_image_tokens_per_image, :] # (1, 4, num_image_tokens_per_image, 128)
-                # standard scaled dot-product attention
-                attebtion_weights = torch.einsum("bhqd,bhkd->bhqk", query_states, image_key_states) / scale # (1, 28, 1, 128) * (1, 28, num_image_tokens_per_image, 128) -> (1, 28, 1, num_image_tokens_per_image)
-                attention_weights = nn.functional.softmax(attebtion_weights, dim=-1) # (1, 28, 1, num_image_tokens_per_image)
-                # get the top-k tokens with the highest attention weights
-                token_scores = attention_weights.mean(dim=1).squeeze(1).squeeze(0)
-                topk_indices = torch.topk(token_scores, tokens_to_keep, largest=True).indices
-                topk_indices = topk_indices + image_start_indice
-                keep_indices.append(topk_indices)
-
-            keep_indices.append(torch.arange(0, image_start_indices[0], device=key_states.device))
-            keep_indices.append(torch.arange(image_start_indices[-1] + num_image_tokens_per_image, key_states.shape[-2], device=key_states.device))
-            keep_indices = torch.cat(keep_indices).sort().values
-            # filter the key and value states
-            key_states = key_states.index_select(2, keep_indices) # (1, 4, 7403, 128) -> (1, 4, 3718, 128)
-            value_states = value_states.index_select(2, keep_indices) # (1, 4, 7403, 128) -> (1, 4, 3718, 128)
-
-        ######################## Wei KV filtering logic ##################################
-
-
-
-        if attention_mask is not None:
-            if attention_mask.size() != (bsz, 1, q_len, kv_seq_len):
+        def _check_and_contiguous(q, k, v, mask):
+            # shape check
+            if mask is not None and mask.size() != (bsz, 1, q_len, kv_seq_len):
                 raise ValueError(
-                    f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
+                    f"Attention mask should be {(bsz,1,q_len,kv_seq_len)}, got {mask.size()}"
+                )
+            # work around PyTorch SDPA bug
+            if q.device.type == "cuda" and mask is not None:
+                q = q.contiguous()
+                k = k.contiguous()
+                v = v.contiguous()
+            return q, k, v
+
+        def _scaled_attn(q, k, v, mask):
+            q, k, v = _check_and_contiguous(q, k, v, mask)
+            return torch.nn.functional.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=mask,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                is_causal=self.is_causal and mask is None and q_len > 1,
+            )
+
+        # --- pick pruning branch ---
+        if keep_ratio is not None:
+            if pruning_method == "triton_prune":
+                # a) call single-step triton prune
+                key_states, value_states, _ = prune_tokens_triton(
+                    query_states,
+                    key_states,
+                    value_states,
+                    keep_ratio,
+                    image_start_indices,
+                    num_image_tokens_per_image,
+                )
+                attn_output = _scaled_attn(
+                    query_states, key_states, value_states, attention_mask
+                )
+            elif pruning_method == "fast_no_triton":
+                key_states, value_states, _ = prune_tokens_fast(
+                    query_states,
+                    key_states,
+                    value_states,
+                    keep_ratio,
+                    image_start_indices,
+                    num_image_tokens_per_image,
+                )
+                attn_output = _scaled_attn(
+                    query_states, key_states, value_states, attention_mask
                 )
 
-        # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with non-contiguous inputs with custom attn_mask,
-        # Reference: https://github.com/pytorch/pytorch/issues/112577.
-        if query_states.device.type == "cuda" and attention_mask is not None:
-            query_states = query_states.contiguous()
-            key_states = key_states.contiguous()
-            value_states = value_states.contiguous()
+            elif pruning_method == "unoptimized":
+                # b) manual PyTorch loop
+                tokens_to_keep = round(num_image_tokens_per_image * keep_ratio)
+                if not hasattr(past_key_value, "scale"):
+                    past_key_value.scale = query_states.shape[-1] ** 0.5
+                scale = past_key_value.scale
 
-        attn_output = torch.nn.functional.scaled_dot_product_attention(
-            query_states,  # (1, 28, 1, 128)
-            key_states, # (1, 28, 7403, 128)
-            value_states, # (1, 28, 7403, 128)
-            attn_mask=attention_mask,
-            dropout_p=self.attention_dropout if self.training else 0.0,
-            # The q_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case q_len == 1.
-            is_causal=self.is_causal and attention_mask is None and q_len > 1,
-        )  #  (1, 28, seq_len, 128)   or   (1, 28, 1, 128)
+                keep_indices = []
+                for start in image_start_indices:
+                    # compute per-image attention scores
+                    img_k = key_states[:, :, start : start + num_image_tokens_per_image, :]
+                    attn_w = torch.einsum("bhqd,bhkd->bhqk", query_states, img_k) / scale
+                    weights = nn.functional.softmax(attn_w, dim=-1)
+                    scores = weights.mean(dim=1).squeeze(1).squeeze(0)
+                    topk = torch.topk(scores, tokens_to_keep, largest=True).indices
+                    keep_indices.append(topk + start)
+
+                # also keep everything before the first image and after the last
+                keep_indices.append(
+                    torch.arange(0, image_start_indices[0], device=key_states.device)
+                )
+                keep_indices.append(
+                    torch.arange(
+                        image_start_indices[-1] + num_image_tokens_per_image,
+                        kv_seq_len,
+                        device=key_states.device,
+                    )
+                )
+
+                keep_indices = torch.cat(keep_indices).sort().values
+                key_states = key_states.index_select(2, keep_indices)
+                value_states = value_states.index_select(2, keep_indices)
+
+                attn_output = _scaled_attn(
+                    query_states, key_states, value_states, attention_mask
+                )
+
+            elif pruning_method == "prune_and_attend_triton":
+                # c) the fused prune+attend
+
+                attn_output, keep_idx = prune_and_attend(
+                    query_states, key_states, value_states,
+                    keep_ratio, image_start_indices, num_image_tokens_per_image
+                )
+
+            else:
+                raise ValueError(f"Unknown pruning_method '{pruning_method}'")
+
+        else:
+            # no pruning at all → just the standard attention
+            attn_output = _scaled_attn(
+                query_states, key_states, value_states, attention_mask
+            )
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(bsz, q_len, self.hidden_size)
